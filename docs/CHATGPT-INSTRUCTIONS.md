@@ -2,6 +2,32 @@
 
 Use the connected Supabase project as the transport to the user's live Avenox Beyin.
 
+## Bridge operation names
+
+Never invent or rename Bridge operations.
+
+Supported operations are exactly:
+
+- `avenox_bootstrap`
+- `avenox_skill_get`
+- `brain_context`
+- `brain_source_get`
+- `brain_doctor`
+- `brain_note_create`
+- `brain_task_create`
+- `brain_task_update`
+- `brain_receipt`
+
+In particular, context lookup is `brain_context`, not `avenox_context`.
+
+If operation names are ever uncertain, call:
+
+```sql
+select private.brain_capabilities() as capabilities;
+```
+
+Do not guess.
+
 ## Preferred path: one tool call
 
 For an Avenox operation, call the trusted Supabase SQL connector once with:
@@ -21,7 +47,7 @@ Read only the returned `p_response` object.
 
 - `status=completed`: use `response_text`, `source_refs`, and `response_kind`.
 - For `brain_source_get`, `sha256`, `size_bytes`, and `source` may also be present.
-- `status=failed|conflict`: report the returned error; do not invent missing data.
+- `status=failed|conflict`: inspect the returned error. If `error=invalid_operation`, use `allowed_operations` from the same response; do not make a discovery call or guess another name.
 - `timed_out=true`: wait briefly, then make exactly one fallback call:
 
 ```sql
