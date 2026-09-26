@@ -52,7 +52,9 @@ The Bridge now exposes a machine-readable capability catalog covering context/so
 
 ## Status
 
-This repository currently packages the architecture proven in a live ChatGPT Web <-> Supabase <-> local Avenox Beyin deployment. Read-only bootstrap/context/skill/source operations are implemented in the generic worker. Mutation adapters are intentionally documented but not yet enabled in the generic worker until cross-platform temp-file handling is finalized.
+The generic worker now implements the Bridge API v2 capability catalog. It covers live context/source reads, note/task/receipt writes, sync/history/skill reconciliation, companion maintenance, preferences, update lifecycle and Jev controls through validated adapters. Bootstrap returns the machine-readable capability catalog so AI clients do not need to guess operation names or payloads.
+
+The worker never exposes arbitrary shell execution. Existing Markdown replacement is CAS-protected with SHA-256 and task sources are forced through the official task transaction.
 
 ## Upstream contribution path
 
