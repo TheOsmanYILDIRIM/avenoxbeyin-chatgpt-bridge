@@ -1,0 +1,10 @@
+{
+  "supabase_url": "https://YOUR_PROJECT.supabase.co",
+  "supabase_publishable_key": "sb_publishable_...",
+  "worker_email": "worker@example.invalid",
+  "worker_password_env": "AVENOX_BRIDGE_WORKER_PASSWORD",
+  "vault_root": "/absolute/path/to/your/avenox-vault",
+  "python": "python3",
+  "poll_interval_ms": 5000,
+  "max_source_bytes": 262144
+}
