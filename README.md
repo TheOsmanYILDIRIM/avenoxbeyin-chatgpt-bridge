@@ -27,26 +27,9 @@ ChatGPT Web
 - keep project source code in GitHub, not in Brain
 - use Drive only as an optional readable fallback
 
-## One-call fast path
+## Transport\n\nThe default transport is the normal queue/result flow: ChatGPT enqueues a command, the authenticated worker executes it locally, then ChatGPT reads that command's projected response. An experimental long-running SQL fast path was removed because some ChatGPT/Supabase security layers reject it.\n\n## Operations
 
-With the trusted Supabase SQL connector, `private.brain_execute(...)` commits the queue item, keeps the same tool call open, and returns the worker result when ready. The normal path is therefore **one ChatGPT tool call**. If the configured timeout expires, use `private.brain_result(command_id)` once as fallback.
-
-The projection preserves full `response_text`; exact source reads also return `sha256`, `size_bytes`, and `source`. Internal worker/auth/raw-result metadata is not exposed.
-
-## Operations
-
-Read-only core:
-- `avenox_bootstrap`
-- `avenox_skill_get`
-- `brain_context`
-- `brain_source_get`
-- `brain_doctor`
-
-Mutation operations are part of the protocol and should map only to official `beyin.py` entry points:
-- `brain_note_create`
-- `brain_task_create`
-- `brain_task_update`
-- `brain_receipt`
+The Bridge now exposes a machine-readable capability catalog covering context/source reads, note/task/receipt writes, sync/history/skill-sync, companion compact, preferences, update/rollback/recover, Jev controls, bootstrap and skill reads. The generic worker maps each operation to a validated Avenox entry point and never exposes arbitrary shell execution.
 
 ## Requirements
 
