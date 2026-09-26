@@ -18,6 +18,7 @@ export class Bridge {
   constructor(config) {
     this.c = config;
     this.token = null;
+    this._runtimeCapabilities = null;
   }
 
   async auth() {
@@ -65,8 +66,76 @@ export class Bridge {
       bridge_api_version: BRIDGE_API_VERSION,
       vault_root: this.c.vault_root,
       poll_interval_ms: this.c.poll_interval_ms,
-      operations: CAPABILITIES
+      operations: await this.runtimeCapabilities()
     };
+  }
+
+  async runtimeCapabilities() {
+    if (this._runtimeCapabilities) return this._runtimeCapabilities;
+
+    const py = this.pythonInvocation();
+    let help = '';
+    try {
+      const { stdout, stderr } = await execFileAsync(
+        py.cmd,
+        [...py.prefix, resolve(this.c.vault_root, 'beyin.py'), '-h'],
+        {
+          cwd: this.c.vault_root,
+          windowsHide: true,
+          maxBuffer: 2 * 1024 * 1024
+        }
+      );
+      help = `${stdout || ''}\n${stderr || ''}`;
+    } catch (e) {
+      help = `${e.stdout || ''}\n${e.stderr || ''}`;
+    }
+
+    const cli = new Set();
+    const match = help.match(/\{([^}]+)\}/);
+    if (match) {
+      for (const name of match[1].split(',').map(x => x.trim()).filter(Boolean)) cli.add(name);
+    }
+
+    const needsCli = new Map([
+      ['brain_context','context'],
+      ['brain_note_create','note-create'],
+      ['brain_task_create','task-create'],
+      ['brain_task_update','task-update'],
+      ['brain_receipt','receipt'],
+      ['brain_sync','sync'],
+      ['brain_history','history'],
+      ['brain_skill_sync','skill-sync'],
+      ['brain_companion_compact','companion-compact'],
+      ['brain_preferences_get','preferences'],
+      ['brain_preferences_update','preferences'],
+      ['brain_doctor','doctor'],
+      ['brain_update_check','update'],
+      ['brain_update','update'],
+      ['brain_update_dismiss','update'],
+      ['brain_rollback','rollback'],
+      ['brain_recover','recover'],
+      ['brain_jev_status','jev'],
+      ['brain_jev_config','jev'],
+      ['brain_jev_memory','jev-memory']
+    ]);
+
+    this._runtimeCapabilities = CAPABILITIES.map(cap => {
+      const cliName = needsCli.get(cap.name);
+      if (!cliName) return { ...cap, available: true };
+      const available = cli.size === 0 ? null : cli.has(cliName);
+      return {
+        ...cap,
+        available,
+        ...(available === false ? { unavailable_reason: `local beyin.py does not expose ${cliName}` } : {})
+      };
+    });
+
+    return this._runtimeCapabilities;
+  }
+
+  async supportedCapabilityMap() {
+    const caps = await this.runtimeCapabilities();
+    return new Map(caps.filter(x => x.available !== false).map(x => [x.name, x]));
   }
 
   async run() {
@@ -82,10 +151,17 @@ export class Bridge {
   }
 
   async handle(cmd) {
-    if (!CAPABILITY_MAP.has(cmd.operation)) {
+    const supported = await this.supportedCapabilityMap();
+    if (!supported.has(cmd.operation)) {
+      const caps = await this.runtimeCapabilities();
       return this.finish(cmd, 'failed', null, {
         error: 'invalid_operation',
-        allowed_operations: CAPABILITIES.map(x => x.name)
+        requested_operation: cmd.operation,
+        allowed_operations: caps.filter(x => x.available !== false).map(x => x.name),
+        unavailable_operations: caps.filter(x => x.available === false).map(x => ({
+          name: x.name,
+          reason: x.unavailable_reason
+        }))
       });
     }
     try {
@@ -307,7 +383,7 @@ export class Bridge {
       task,
       brain_version: version,
       bridge_api_version: BRIDGE_API_VERSION,
-      bridge_capabilities: CAPABILITIES,
+      bridge_capabilities: await this.runtimeCapabilities(),
       core_skill: core,
       skills_manifest: manifest
     };
