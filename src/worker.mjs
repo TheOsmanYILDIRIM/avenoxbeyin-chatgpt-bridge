@@ -15,6 +15,8 @@ export class Bridge {
   constructor(config) {
     this.c = config;
     this.token = null;
+    this.lastPublishedBootstrapHash = null;
+    this.lastManifestHashes = new Map();
   }
 
   async auth() {
@@ -74,6 +76,7 @@ export class Bridge {
   async run() {
     for (;;) {
       try {
+        await this.publishCacheIfChanged();
         const cmd = await this.rpc('claim_next_brain_command');
         if (cmd) await this.handle(cmd);
       } catch (e) {
@@ -206,6 +209,39 @@ export class Bridge {
       core_skill: core,
       skills_manifest: manifest
     };
+  }
+
+  async publishCacheIfChanged() {
+    const snapshot = await this.bootstrap('cache-refresh');
+    const manifestText = JSON.stringify(snapshot.skills_manifest);
+    const bootstrapHash = sha(
+      `${snapshot.brain_version}|${snapshot.core_skill.sha256}|${manifestText}`
+    );
+
+    if (bootstrapHash === this.lastPublishedBootstrapHash) return;
+
+    const changedSkills = [];
+    for (const entry of snapshot.skills_manifest) {
+      if (this.lastManifestHashes.get(entry.name) !== entry.sha256) {
+        try {
+          changedSkills.push(await this.skillGet(entry.name));
+        } catch {}
+      }
+    }
+
+    const projection = this.project('avenox_bootstrap', snapshot);
+    await this.rpc('publish_avenox_cache', {
+      p_brain_version: snapshot.brain_version,
+      p_bootstrap_hash: bootstrapHash,
+      p_bootstrap_text: projection.text,
+      p_skills_manifest: snapshot.skills_manifest,
+      p_skills: changedSkills
+    });
+
+    this.lastPublishedBootstrapHash = bootstrapHash;
+    this.lastManifestHashes = new Map(
+      snapshot.skills_manifest.map(s => [s.name, s.sha256])
+    );
   }
 
   async sourceGet(source) {
