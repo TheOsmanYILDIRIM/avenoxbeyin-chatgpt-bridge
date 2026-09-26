@@ -1,28 +1,28 @@
-import { readFile, readdir, stat, realpath } from 'node:fs/promises';
-import { resolve, relative, basename, isAbsolute, extname, sep } from 'node:path';
+import {
+  readFile, readdir, stat, realpath, writeFile, mkdtemp, rm, rename, chmod
+} from 'node:fs/promises';
+import {
+  resolve, relative, basename, isAbsolute, extname, sep, dirname, join
+} from 'node:path';
+import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { CAPABILITIES, CAPABILITY_MAP, BRIDGE_API_VERSION } from './capabilities.mjs';
 
 const execFileAsync = promisify(execFile);
-
-const OPS = new Set([
-  'brain_context','brain_note_create','brain_task_create','brain_task_update',
-  'brain_receipt','brain_doctor','avenox_bootstrap','avenox_skill_get','brain_source_get'
-]);
+const RECEIPT_HARNESSES = new Set(['codex','claude','antigravity','hermes','opencode','omp']);
+const JEV_FEATURES = new Set(['context','review','answer','auto_context']);
 
 export class Bridge {
   constructor(config) {
     this.c = config;
     this.token = null;
-    this.lastPublishedBootstrapHash = null;
-    this.lastManifestHashes = new Map();
   }
 
   async auth() {
     const password = process.env[this.c.worker_password_env];
     if (!password) throw new Error(`missing env ${this.c.worker_password_env}`);
-
     const r = await fetch(`${this.c.supabase_url}/auth/v1/token?grant_type=password`, {
       method: 'POST',
       headers: {
@@ -31,10 +31,8 @@ export class Bridge {
       },
       body: JSON.stringify({ email: this.c.worker_email, password })
     });
-
     if (!r.ok) throw new Error(`auth failed ${r.status}`);
-    const j = await r.json();
-    this.token = j.access_token;
+    this.token = (await r.json()).access_token;
   }
 
   headers() {
@@ -47,19 +45,16 @@ export class Bridge {
 
   async rpc(name, body = {}) {
     if (!this.token) await this.auth();
-
     const r = await fetch(`${this.c.supabase_url}/rest/v1/rpc/${name}`, {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify(body)
     });
-
     if (r.status === 401) {
       this.token = null;
       await this.auth();
       return this.rpc(name, body);
     }
-
     if (!r.ok) throw new Error(`${name} failed ${r.status}: ${await r.text()}`);
     const text = await r.text();
     return text ? JSON.parse(text) : null;
@@ -67,16 +62,16 @@ export class Bridge {
 
   async doctor() {
     return {
+      bridge_api_version: BRIDGE_API_VERSION,
       vault_root: this.c.vault_root,
       poll_interval_ms: this.c.poll_interval_ms,
-      operations: [...OPS]
+      operations: CAPABILITIES
     };
   }
 
   async run() {
     for (;;) {
       try {
-        await this.publishCacheIfChanged();
         const cmd = await this.rpc('claim_next_brain_command');
         if (cmd) await this.handle(cmd);
       } catch (e) {
@@ -87,16 +82,21 @@ export class Bridge {
   }
 
   async handle(cmd) {
-    if (!OPS.has(cmd.operation)) {
-      return this.finish(cmd, 'failed', null, { message: 'unsupported operation' });
+    if (!CAPABILITY_MAP.has(cmd.operation)) {
+      return this.finish(cmd, 'failed', null, {
+        error: 'invalid_operation',
+        allowed_operations: CAPABILITIES.map(x => x.name)
+      });
     }
-
     try {
       const result = await this.execute(cmd.operation, cmd.payload || {});
-      const p = this.project(cmd.operation, result);
-      await this.finish(cmd, 'completed', result, null, p);
+      const projection = this.project(cmd.operation, result);
+      await this.finish(cmd, 'completed', result, null, projection);
     } catch (e) {
-      await this.finish(cmd, 'failed', null, { name: e.name, message: e.message });
+      await this.finish(cmd, e.code === 'conflict' ? 'conflict' : 'failed', null, {
+        error: e.code || 'operation_failed',
+        message: e.message
+      });
     }
   }
 
@@ -112,14 +112,21 @@ export class Bridge {
     });
   }
 
+  pythonInvocation() {
+    if (this.c.python) return { cmd: this.c.python, prefix: [] };
+    if (process.platform === 'win32') return { cmd: 'py', prefix: ['-3'] };
+    return { cmd: 'python3', prefix: [] };
+  }
+
   beyinArgs(sub, args = []) {
     return [resolve(this.c.vault_root, 'beyin.py'), sub, ...args, '--json'];
   }
 
   async runBeyin(sub, args = []) {
+    const py = this.pythonInvocation();
     const { stdout } = await execFileAsync(
-      this.c.python || (process.platform === 'win32' ? 'py' : 'python3'),
-      process.platform === 'win32' && (this.c.python || '') === '' ? ['-3', ...this.beyinArgs(sub, args)] : this.beyinArgs(sub, args),
+      py.cmd,
+      [...py.prefix, ...this.beyinArgs(sub, args)],
       {
         cwd: this.c.vault_root,
         windowsHide: true,
@@ -129,22 +136,124 @@ export class Bridge {
     return JSON.parse(stdout);
   }
 
-  async execute(op, payload) {
-    if (op === 'brain_context') {
-      const args = [];
-      if (payload.query) args.push(payload.query);
-      if (payload.project) args.push('--project', payload.project);
-      if (payload.limit) args.push('--limit', String(payload.limit));
-      if (payload.budget_chars) args.push('--budget-chars', String(payload.budget_chars));
-      return this.runBeyin('context', args);
+  async withTempJson(value, fn) {
+    const dir = await mkdtemp(join(tmpdir(), 'avenox-bridge-'));
+    const path = join(dir, 'payload.json');
+    try {
+      await writeFile(path, JSON.stringify(value), { encoding: 'utf8', mode: 0o600 });
+      return await fn(path);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
+  }
 
-    if (op === 'brain_doctor') return this.runBeyin('doctor');
-    if (op === 'avenox_bootstrap') return this.bootstrap(payload.task || '');
-    if (op === 'avenox_skill_get') return this.skillGet(payload.name);
-    if (op === 'brain_source_get') return this.sourceGet(payload.source);
+  async execute(op, payload) {
+    switch (op) {
+      case 'brain_context': {
+        const args = [requiredString(payload.query, 'query')];
+        if (payload.project) args.push('--project', requiredString(payload.project, 'project'));
+        if (payload.limit != null) args.push('--limit', String(intInRange(payload.limit, 1, 100, 'limit')));
+        if (payload.budget_chars != null) args.push('--budget-chars', String(intInRange(payload.budget_chars, 1000, 100000, 'budget_chars')));
+        if (payload.jev === true) args.push('--jev');
+        if (payload.audience != null) {
+          if (payload.audience !== 'public') throw new Error('audience must be public');
+          args.push('--audience', 'public');
+        }
+        return this.runBeyin('context', args);
+      }
 
-    throw new Error(`${op} adapter not enabled in generic worker yet`);
+      case 'brain_source_get':
+        return this.sourceGet(payload.source);
+
+      case 'brain_source_update':
+        return this.sourceUpdate(payload);
+
+      case 'brain_note_create':
+        return this.withTempJson(validateCreatePayload(payload), p => this.runBeyin('note-create', ['--file', p]));
+
+      case 'brain_task_create':
+        return this.withTempJson(validateCreatePayload(payload), p => this.runBeyin('task-create', ['--file', p]));
+
+      case 'brain_task_update': {
+        const body = {
+          id: requiredString(payload.id, 'id'),
+          expected_revision: intInRange(payload.expected_revision, 1, Number.MAX_SAFE_INTEGER, 'expected_revision'),
+          changes: requiredObject(payload.changes, 'changes')
+        };
+        return this.withTempJson(body, p => this.runBeyin('task-update', ['--file', p]));
+      }
+
+      case 'brain_receipt': {
+        const harness = payload.harness || 'codex';
+        if (!RECEIPT_HARNESSES.has(harness)) throw new Error('invalid receipt harness');
+        const body = {
+          event_id: requiredString(payload.event_id, 'event_id'),
+          summary: requiredString(payload.summary, 'summary'),
+          refs: requiredStringArray(payload.refs, 'refs')
+        };
+        if (payload.session != null) body.session = requiredString(payload.session, 'session');
+        return this.withTempJson(body, p => this.runBeyin('receipt', ['--file', p, '--harness', harness]));
+      }
+
+      case 'brain_sync':
+        return this.runBeyin('sync');
+
+      case 'brain_history':
+        return this.runBeyin('history', [requiredString(payload.id, 'id')]);
+
+      case 'brain_skill_sync':
+        return this.runBeyin('skill-sync');
+
+      case 'brain_companion_compact':
+        return this.runBeyin('companion-compact', payload.dry_run === true ? ['--dry-run'] : []);
+
+      case 'brain_preferences_get':
+        return this.runBeyin('preferences');
+
+      case 'brain_preferences_update':
+        return this.runBeyin('preferences', preferenceArgs(payload));
+
+      case 'brain_doctor':
+        return this.runBeyin('doctor');
+
+      case 'brain_update_check':
+        return this.runBeyin('update', ['--check', '--metadata-only']);
+
+      case 'brain_update':
+        return this.runBeyin('update');
+
+      case 'brain_update_dismiss':
+        return this.runBeyin('update', ['--dismiss', requiredVersion(payload.version)]);
+
+      case 'brain_rollback': {
+        const rollback = await this.runBeyin('rollback');
+        const doctor = await this.runBeyin('doctor');
+        return { rollback, doctor };
+      }
+
+      case 'brain_recover':
+        return this.runBeyin('recover');
+
+      case 'brain_jev_status':
+        return this.runBeyin('jev', payload.check === true ? ['status', '--check'] : ['status']);
+
+      case 'brain_jev_config':
+        return this.runBeyin('jev', jevArgs(payload));
+
+      case 'brain_jev_memory':
+        return this.withTempJson(requiredObject(payload.proposal, 'proposal'), p =>
+          this.runBeyin('jev-memory', ['--project', requiredString(payload.project, 'project'), '--file', p])
+        );
+
+      case 'avenox_bootstrap':
+        return this.bootstrap(payload.task || '');
+
+      case 'avenox_skill_get':
+        return this.skillGet(payload.name);
+
+      default:
+        throw new Error(`unsupported operation: ${op}`);
+    }
   }
 
   async walk(dir, out = []) {
@@ -163,16 +272,12 @@ export class Bridge {
 
   async skillGet(name) {
     if (!/^[A-Za-z0-9_-]+$/.test(name || '')) throw new Error('invalid skill name');
-
     const root = await realpath(this.skillRoot());
     const path = resolve(root, name, 'SKILL.md');
     const real = await realpath(path);
-
     if (!real.startsWith(root + sep)) throw new Error('skill escapes root');
-
     const content = await readFile(real, 'utf8');
     const description = (content.match(/^description:\s*(.+)$/m) || [])[1] || '';
-
     return {
       name,
       description,
@@ -185,10 +290,7 @@ export class Bridge {
   async bootstrap(task) {
     const root = this.skillRoot();
     const names = (await readdir(root, { withFileTypes: true }))
-      .filter(e => e.isDirectory())
-      .map(e => e.name)
-      .sort();
-
+      .filter(e => e.isDirectory()).map(e => e.name).sort();
     const manifest = [];
     for (const name of names) {
       try {
@@ -196,103 +298,96 @@ export class Bridge {
         manifest.push({ name: s.name, description: s.description, sha256: s.sha256 });
       } catch {}
     }
-
     const core = await this.skillGet('beyin');
     let version = 'unknown';
     try {
       version = (await readFile(resolve(this.c.vault_root, '.beyin-version'), 'utf8')).trim();
     } catch {}
-
     return {
       task,
       brain_version: version,
+      bridge_api_version: BRIDGE_API_VERSION,
+      bridge_capabilities: CAPABILITIES,
       core_skill: core,
       skills_manifest: manifest
     };
   }
 
-  async publishCacheIfChanged() {
-    const snapshot = await this.bootstrap('cache-refresh');
-    const manifestText = JSON.stringify(snapshot.skills_manifest);
-    const bootstrapHash = sha(
-      `${snapshot.brain_version}|${snapshot.core_skill.sha256}|${manifestText}`
-    );
-
-    if (bootstrapHash === this.lastPublishedBootstrapHash) return;
-
-    const changedSkills = [];
-    for (const entry of snapshot.skills_manifest) {
-      if (this.lastManifestHashes.get(entry.name) !== entry.sha256) {
-        try {
-          changedSkills.push(await this.skillGet(entry.name));
-        } catch {}
-      }
-    }
-
-    const projection = this.project('avenox_bootstrap', snapshot);
-    await this.rpc('publish_avenox_cache', {
-      p_brain_version: snapshot.brain_version,
-      p_bootstrap_hash: bootstrapHash,
-      p_bootstrap_text: projection.text,
-      p_skills_manifest: snapshot.skills_manifest,
-      p_skills: changedSkills
-    });
-
-    this.lastPublishedBootstrapHash = bootstrapHash;
-    this.lastManifestHashes = new Map(
-      snapshot.skills_manifest.map(s => [s.name, s.sha256])
-    );
-  }
-
-  async sourceGet(source) {
+  async safeMarkdownPath(source) {
     if (
-      typeof source !== 'string' ||
-      !source ||
-      source.includes('\0') ||
-      isAbsolute(source) ||
-      source.split(/[\\/]/).includes('..') ||
+      typeof source !== 'string' || !source || source.includes('\0') ||
+      isAbsolute(source) || source.split(/[\\/]/).includes('..') ||
       extname(source).toLowerCase() !== '.md'
-    ) {
-      throw new Error('invalid source');
-    }
+    ) throw new Error('invalid source');
 
     const root = await realpath(this.c.vault_root);
     let path;
-
     if (source.includes('/') || source.includes('\\')) {
       path = resolve(root, source);
     } else {
       const matches = (await this.walk(root)).filter(
         p => basename(p) === source && extname(p).toLowerCase() === '.md'
       );
-
-      if (matches.length === 0) throw new Error('source not found');
-      if (matches.length > 1) {
-        throw new Error(
-          `source ambiguous: ${matches.map(p => relative(root, p)).join(', ')}`
-        );
-      }
+      if (matches.length === 0) throw coded('source_not_found', 'source not found');
+      if (matches.length > 1) throw coded(
+        'conflict',
+        `source ambiguous: ${matches.map(p => relative(root, p)).join(', ')}`
+      );
       path = matches[0];
     }
-
     const real = await realpath(path);
-    if (!(real === root || real.startsWith(root + sep))) {
-      throw new Error('source escapes vault');
-    }
+    if (!(real === root || real.startsWith(root + sep))) throw new Error('source escapes vault');
+    return { root, real };
+  }
 
+  async sourceGet(source) {
+    const { root, real } = await this.safeMarkdownPath(source);
     const s = await stat(real);
-    if (s.size > (this.c.max_source_bytes || 262144)) {
-      throw new Error('source too large');
-    }
-
+    if (s.size > (this.c.max_source_bytes || 262144)) throw new Error('source too large');
     const content = await readFile(real, 'utf8');
-
     return {
       source: relative(root, real).split(sep).join('/'),
       size_bytes: s.size,
       sha256: sha(content),
       content
     };
+  }
+
+  async sourceUpdate(payload) {
+    const source = requiredString(payload.source, 'source');
+    const expected = requiredSha(payload.expected_sha256);
+    const content = requiredStringAllowEmpty(payload.content, 'content');
+    const { root, real } = await this.safeMarkdownPath(source);
+    const current = await readFile(real, 'utf8');
+    if (sha(current) !== expected) throw coded('conflict', 'source hash changed');
+    const rel = relative(root, real).split(sep).join('/');
+    if (/(^|\/)tasks\//i.test(rel) || /^---[\s\S]{0,4096}?^kind:\s*task\s*$/mi.test(current)) {
+      throw new Error('task sources must use brain_task_update');
+    }
+
+    const s = await stat(real);
+    const temp = resolve(dirname(real), `.avenox-bridge-${process.pid}-${Date.now()}.tmp`);
+    await writeFile(temp, content, { encoding: 'utf8' });
+    await chmod(temp, s.mode);
+    await rename(temp, real);
+
+    try {
+      const sync = await this.runBeyin('sync');
+      return {
+        source: rel,
+        previous_sha256: expected,
+        sha256: sha(content),
+        size_bytes: Buffer.byteLength(content, 'utf8'),
+        sync
+      };
+    } catch (e) {
+      const restore = resolve(dirname(real), `.avenox-bridge-restore-${process.pid}-${Date.now()}.tmp`);
+      await writeFile(restore, current, { encoding: 'utf8' });
+      await chmod(restore, s.mode);
+      await rename(restore, real);
+      try { await this.runBeyin('sync'); } catch {}
+      throw e;
+    }
   }
 
   project(op, result) {
@@ -306,35 +401,148 @@ export class Bridge {
       };
     }
 
-    if (op === 'brain_doctor') {
-      return { kind: 'doctor', refs: [], text: JSON.stringify(result, null, 2) };
-    }
-
-    if (op === 'avenox_skill_get') {
-      return { kind: 'skill', refs: [result.source], text: result.content };
-    }
-
-    if (op === 'brain_source_get') {
-      return { kind: 'source', refs: [result.source], text: result.content };
-    }
+    if (op === 'avenox_skill_get') return { kind:'skill', refs:[result.source], text:result.content };
+    if (op === 'brain_source_get') return { kind:'source', refs:[result.source], text:result.content };
 
     if (op === 'avenox_bootstrap') {
       return {
         kind: 'bootstrap',
         refs: [result.core_skill.source],
         text:
-          `# Avenox Bootstrap\n- Brain: ${result.brain_version}\n- Skills: ${result.skills_manifest.length}\n\n` +
+          `# Avenox Bootstrap\n- Brain: ${result.brain_version}\n- Bridge API: ${result.bridge_api_version}\n- Skills: ${result.skills_manifest.length}\n\n` +
+          `## Bridge Capabilities\n${JSON.stringify(result.bridge_capabilities, null, 2)}\n\n` +
           `## Core Skill\n${result.core_skill.content}\n\n## Skills Manifest\n` +
-          result.skills_manifest
-            .map(s => `- **${s.name}** (${s.sha256.slice(0, 12)}): ${s.description}`)
-            .join('\n')
+          result.skills_manifest.map(
+            s => `- **${s.name}** (${s.sha256.slice(0,12)}): ${s.description}`
+          ).join('\n')
       };
     }
 
-    return { kind: 'mutation', refs: [], text: JSON.stringify(result, null, 2) };
+    if (op === 'brain_doctor' || op === 'brain_preferences_get' || op === 'brain_history' ||
+        op === 'brain_update_check' || op === 'brain_jev_status') {
+      return { kind:'doctor', refs:[], text:JSON.stringify(result, null, 2) };
+    }
+
+    return { kind:'mutation', refs:extractRefs(result), text:JSON.stringify(result, null, 2) };
   }
 }
 
+function extractRefs(value) {
+  const refs = new Set();
+  const walk = x => {
+    if (!x) return;
+    if (Array.isArray(x)) return x.forEach(walk);
+    if (typeof x !== 'object') return;
+    for (const [k,v] of Object.entries(x)) {
+      if (k === 'source' && typeof v === 'string') refs.add(v);
+      else if ((k === 'refs' || k === 'evidence_refs') && Array.isArray(v)) {
+        v.filter(y => typeof y === 'string').forEach(y => refs.add(y));
+      }
+      walk(v);
+    }
+  };
+  walk(value);
+  return [...refs];
+}
+
+function validateCreatePayload(payload) {
+  return {
+    source: requiredString(payload.source, 'source'),
+    text: requiredStringAllowEmpty(payload.text, 'text'),
+    metadata: requiredObject(payload.metadata, 'metadata')
+  };
+}
+
+function preferenceArgs(p) {
+  const args = [];
+  const allowed = new Set([
+    'profile','interval_minutes','context_mode','context_chars','auto_sync',
+    'secret_filter','last_session_chars','threads_chars','update_notifications'
+  ]);
+  for (const k of Object.keys(p)) if (!allowed.has(k)) throw new Error(`unsupported preference: ${k}`);
+  if (p.profile != null) {
+    if (!['normal','economical','manual'].includes(p.profile)) throw new Error('invalid profile');
+    args.push('--profile', p.profile);
+  }
+  if (p.interval_minutes != null) args.push('--interval-minutes', String(intInRange(p.interval_minutes,0,1440,'interval_minutes')));
+  if (p.context_mode != null) {
+    if (!['turn','session','off'].includes(p.context_mode)) throw new Error('invalid context_mode');
+    args.push('--context-mode', p.context_mode);
+  }
+  if (p.context_chars != null) args.push('--context-chars', String(intInRange(p.context_chars,1000,12000,'context_chars')));
+  if (p.auto_sync != null) args.push('--auto-sync', p.auto_sync ? 'on' : 'off');
+  if (p.secret_filter != null) args.push('--secret-filter', p.secret_filter ? 'on' : 'off');
+  if (p.last_session_chars != null) args.push('--last-session-chars', String(intInRange(p.last_session_chars,0,200000,'last_session_chars')));
+  if (p.threads_chars != null) args.push('--threads-chars', String(intInRange(p.threads_chars,0,200000,'threads_chars')));
+  if (p.update_notifications != null) args.push('--update-notifications', p.update_notifications ? 'on' : 'off');
+  if (args.length === 0) throw new Error('no preference changes supplied');
+  return args;
+}
+
+function jevArgs(p) {
+  if (!['off','shadow','on'].includes(p.mode)) throw new Error('invalid Jev mode');
+  const args = [p.mode];
+  for (const name of p.enable || []) {
+    if (!JEV_FEATURES.has(name)) throw new Error('invalid Jev enable feature');
+    args.push('--enable', name);
+  }
+  for (const name of p.disable || []) {
+    if (!JEV_FEATURES.has(name)) throw new Error('invalid Jev disable feature');
+    args.push('--disable', name);
+  }
+  if (p.provider != null) {
+    if (!['typesafe','vercel','laya'].includes(p.provider)) throw new Error('invalid Jev provider');
+    args.push('--provider', p.provider);
+  }
+  if (p.model != null) {
+    if (!['multilingual','english'].includes(p.model)) throw new Error('invalid Laya model');
+    args.push('--model', p.model);
+  }
+  if (p.base_url != null) {
+    const u = new URL(p.base_url);
+    if (!['127.0.0.1','[::1]','::1'].includes(u.hostname) || u.protocol !== 'http:') {
+      throw new Error('Laya base_url must be loopback HTTP');
+    }
+    args.push('--base-url', p.base_url);
+  }
+  return args;
+}
+
+function requiredVersion(v) {
+  const s = requiredString(v, 'version');
+  if (!/^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/.test(s)) throw new Error('invalid version');
+  return s;
+}
+function requiredSha(v) {
+  const s = requiredString(v, 'expected_sha256').toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(s)) throw new Error('invalid sha256');
+  return s;
+}
+function requiredString(v, name) {
+  if (typeof v !== 'string' || !v.trim()) throw new Error(`${name} required`);
+  return v;
+}
+function requiredStringAllowEmpty(v, name) {
+  if (typeof v !== 'string') throw new Error(`${name} must be string`);
+  return v;
+}
+function requiredObject(v, name) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error(`${name} must be object`);
+  return v;
+}
+function requiredStringArray(v, name) {
+  if (!Array.isArray(v) || v.some(x => typeof x !== 'string')) throw new Error(`${name} must be string array`);
+  return v;
+}
+function intInRange(v, min, max, name) {
+  if (!Number.isInteger(v) || v < min || v > max) throw new Error(`${name} out of range`);
+  return v;
+}
+function coded(code, message) {
+  const e = new Error(message);
+  e.code = code;
+  return e;
+}
 function sha(value) {
   return createHash('sha256').update(value).digest('hex');
 }
