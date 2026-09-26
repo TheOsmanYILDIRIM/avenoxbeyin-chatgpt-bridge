@@ -3,52 +3,82 @@
 ```text
 ChatGPT Web / Supabase connector
         |
-        | CALL private.brain_execute(...)
+        | insert command
         v
-Supabase queue (brain_commands)
+public.brain_commands
         |
-        | authenticated claim RPC
+        | authenticated worker claim RPC
         v
-Local worker (Node.js; Linux/macOS/Windows/Termux)
+Local worker
+(Linux / macOS / Windows / Termux)
         |
+        | validated operation adapter
         v
 Avenox Beyin V3 / beyin.py / managed skills / vault
         |
-        | finish_brain_command(...)
+        | finish RPC + response projection
         v
-brain_responses projection
+public.brain_responses
         |
-        +---- same open SQL call returns completed response
+        v
+ChatGPT reads only its command result
 ```
 
-## Why the procedure commits
+## Design goal
 
-A PostgreSQL function cannot insert a queue item and then wait for another connection to process it inside the same uncommitted transaction: the worker cannot see the new row. `private.brain_execute` is therefore a PostgreSQL procedure. It inserts the command, commits it, and then polls the already-committed command while the same ChatGPT SQL tool call remains open.
+The Bridge is a safe remote API for Avenox Beyin, not a remote shell.
 
-This makes the common path one ChatGPT tool invocation even though the bridge may check the database several times internally.
+Every exposed operation has a machine-readable contract:
+- name
+- mode: read / write / maintenance
+- description
+- payload schema
+- mapping to the official Avenox entry point
+- explicit-user-intent requirement when relevant
 
-## Timeout path
+The current catalog lives in `src/capabilities.mjs` and is also included in bootstrap output so an AI client can discover the live contract instead of guessing.
 
-The procedure waits at most 20 seconds (12 seconds recommended). If the worker has not finished, it returns `{timed_out:true, command_id:...}`. ChatGPT then makes one `private.brain_result(command_id)` call. Thus:
+## Coverage
 
-- normal: 1 ChatGPT tool call
-- slow/error recovery: 2 ChatGPT tool calls
+The generic worker covers the major functions described by the current Avenox skills:
+- context, exact source read and history
+- notes, tasks and receipts
+- CAS-protected Markdown source updates + sync
+- sync and skill-sync
+- companion compact
+- preferences read/update
+- doctor
+- update check, update, dismiss, rollback, recover
+- Jev status/config/memory review
+- dynamic bootstrap and skill reads
+
+Operations that modify Markdown use constrained adapters. There is no arbitrary command or shell operation.
+
+## Data integrity
+
+Task writes use Avenox task transactions and revision checks.
+
+Generic Markdown updates require:
+1. an existing canonical Markdown source,
+2. a previously observed SHA-256,
+3. a matching current hash,
+4. atomic replacement,
+5. successful `beyin.py sync`.
+
+If sync fails, the worker restores the prior source and attempts to re-sync.
+
+## Transport
+
+The standard transport is deliberately simple:
+1. ChatGPT enqueues.
+2. Worker polls and executes.
+3. Worker writes a projected response.
+4. ChatGPT reads the result.
+
+An experimental long-running SQL procedure was removed because ChatGPT's Supabase security layer could reject it. The queue/result flow is slower but much more portable across ChatGPT plans and connectors.
 
 ## Security boundary
 
-`private.brain_execute` and `private.brain_result` are not Data API endpoints. They are intended for a trusted Supabase management/SQL connector. Worker-facing RPCs remain authenticated through a dedicated Supabase Auth user checked against `private.bridge_workers`.
+The worker uses a dedicated Supabase Auth account and a publishable key. Worker RPCs verify `auth.uid()` against `private.bridge_workers`.
 
-For public or multi-user deployments, place an authenticated broker/MCP server in front of the queue rather than exposing the private SQL fast path.
-
-## Projection / no data loss
-
-The bridge does not send the whole command row back to ChatGPT. It projects only:
-
-- status
-- response_kind
-- source_refs
-- response_text
-- error (terminal failures)
-- source/size_bytes/sha256 for exact source reads
-
-For `brain_source_get`, `response_text` is the exact Markdown content produced by the worker. Omitting internal metadata does not truncate or summarize the source.
+The public queue tables remain RLS-protected and are not directly available to ordinary anon/authenticated Data API clients.
