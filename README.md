@@ -56,7 +56,7 @@ For a managed local checkout, install once:
 sh scripts/install.sh
 ```
 
-The installer clones the Bridge to `~/.local/share/avenox-brain-bridge`, runs the tests, and creates an `avenox-bridge` command under `~/.local/bin`. It does not create or overwrite `config.local.json`.
+The installer clones the Bridge to `~/.local/share/avenox-brain-bridge`, runs the tests, and creates an `avenox-bridge` command under `~/.local/bin`. If an older non-Git Bridge already exists there, it is moved to a timestamped backup first; `config.local.json` and `.env` are copied into the new checkout instead of being discarded.
 
 After that, updates follow the same small command shape as Avenox Beyin:
 
