@@ -8,12 +8,20 @@ BIN="$HOME/.local/bin/avenox-bridge"
 mkdir -p "$(dirname "$ROOT")" "$(dirname "$BIN")"
 
 if [ -d "$ROOT/.git" ]; then
-  echo "Bridge zaten kurulu: $ROOT"
+  echo "Bridge zaten yonetilen Git kurulumu: $ROOT"
+elif [ -e "$ROOT" ]; then
+  TMP="$ROOT.new.$$"
+  BACKUP="$ROOT.backup-$(date +%Y%m%d%H%M%S)"
+  rm -rf "$TMP"
+  git clone --depth 1 "$REPO" "$TMP"
+  (cd "$TMP" && npm test)
+
+  mv "$ROOT" "$BACKUP"
+  [ ! -f "$BACKUP/config.local.json" ] || cp "$BACKUP/config.local.json" "$TMP/config.local.json"
+  [ ! -f "$BACKUP/.env" ] || cp "$BACKUP/.env" "$TMP/.env"
+  mv "$TMP" "$ROOT"
+  echo "Eski kurulum korundu: $BACKUP"
 else
-  if [ -e "$ROOT" ]; then
-    echo "HATA: $ROOT var ama Git checkout degil. Config'i yedekleyip bu klasoru tasiyin." >&2
-    exit 1
-  fi
   git clone --depth 1 "$REPO" "$ROOT"
 fi
 
