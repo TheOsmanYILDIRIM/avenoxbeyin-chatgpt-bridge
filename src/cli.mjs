@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { Bridge } from './worker.mjs';
 import { DEFAULT_ROOT, checkUpdate, applyUpdate, rollbackUpdate } from './updater.mjs';
 import { startWorker, stopWorker, workerStatus } from './process.mjs';
+import { readCommandLog } from './telemetry.mjs';
 
 const args = process.argv.slice(2);
 const command = args[0] || 'run';
@@ -30,6 +31,16 @@ if (command === 'update') {
     status: 'not_required',
     vault_transport: 'trusted_supabase_queue',
     message: 'Bridge API v3 no longer requires pairing. Full-vault access uses the authenticated Supabase queue.'
+  }, null, 2));
+} else if (command === 'logs') {
+  if (args.length > 2) throw new Error('usage: avenox-bridge logs [LIMIT]');
+  const limit = args[1] == null ? 50 : Number(args[1]);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+    throw new Error('logs LIMIT must be an integer between 1 and 1000');
+  }
+  console.log(JSON.stringify({
+    file: '.bridge-command-log.jsonl',
+    entries: await readCommandLog(DEFAULT_ROOT, { limit })
   }, null, 2));
 } else {
   const configPath = process.env.AVENOX_BRIDGE_CONFIG || resolve(DEFAULT_ROOT, 'config.local.json');
