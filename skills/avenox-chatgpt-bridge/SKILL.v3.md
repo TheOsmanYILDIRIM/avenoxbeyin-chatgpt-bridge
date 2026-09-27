@@ -30,9 +30,17 @@ Her yeni konuşmada ilk anlamlı Avenox/Beyin işi öncesinde `avenox_bootstrap`
 
 ## Full vault
 
-`brain_vault_list`, `brain_vault_get` ve `brain_vault_update` normal authenticated Supabase queue/result akışıyla çalışır.
+`brain_vault_list`, `brain_vault_find`, `brain_vault_search`, `brain_vault_read_range`, `brain_vault_get` ve `brain_vault_update` normal authenticated Supabase queue/result akışıyla çalışır.
 
 Bu operasyonlar Beyin sürekliliği için companion ve diğer vault metin kaynaklarına erişebilir. Bridge yine remote shell değildir.
+
+Keşif ve okuma için shell kullanma:
+- dosya/yol adını bilmiyorsan `brain_vault_find`;
+- metin içinde literal arama gerekiyorsa `brain_vault_search`;
+- büyük bir metin kaynağının yalnız ilgili satırları gerekiyorsa `brain_vault_read_range`;
+- tüm dosya gerekiyorsa `brain_vault_get`.
+
+Companion dosyalarında yazma semantiğini bu Bridge içinde uydurma. Canlı `core_skill` companion davranışını belirler; mevcut tasarımda ilgili companion kaynağını exact read et, skill'in istediği semantiğe göre whole-file CAS update yap ve worker'ın sync sonucunu doğrula.
 
 Worker şu sınırları korur:
 
