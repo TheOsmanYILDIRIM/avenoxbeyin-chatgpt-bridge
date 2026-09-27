@@ -10,7 +10,7 @@ ChatGPT Web cannot directly execute a user's local `beyin.py`. This bridge turns
 
 ```text
 ChatGPT Web
-  -> one CALL private.brain_execute(...)
+  -> enqueue one brain_commands row
   -> Supabase brain_commands
   -> local worker (Linux/macOS/Windows/Termux/etc.)
   -> Avenox Beyin / beyin.py / live skills
@@ -26,7 +26,7 @@ ChatGPT Web
 - dynamically expose current Avenox skills to ChatGPT
 - keep project source code in GitHub, not in Brain
 - use Drive only as an optional readable fallback
-- expose a worker heartbeat so ChatGPT can warn when the local Termux worker is offline
+- warn about an unavailable worker from an unclaimed pending command, without idle heartbeat writes
 
 ## Transport\n\nThe default transport is the normal queue/result flow: ChatGPT enqueues a command, the authenticated worker executes it locally, then ChatGPT reads that command's projected response. An experimental long-running SQL fast path was removed because some ChatGPT/Supabase security layers reject it.\n\n## Operations
 
@@ -49,7 +49,7 @@ The Bridge now exposes a machine-readable capability catalog covering context/so
 5. Put the worker password in the environment variable named by `worker_password_env`.
 6. Run `npm start`.
 7. Add `docs/CHATGPT-INSTRUCTIONS.md` to your ChatGPT Project instructions and connect the Supabase plugin.
-8. Prefer `CALL private.brain_execute(...)`; raw response-table SELECTs are unnecessary.
+8. Use the normal queue/result flow; do not use the removed experimental `brain_execute` procedure.
 
 ## Status
 
