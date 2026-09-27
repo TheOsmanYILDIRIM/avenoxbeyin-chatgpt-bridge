@@ -35,13 +35,16 @@ export async function workerStatus(root = DEFAULT_ROOT) {
   };
 }
 
-export async function startWorker(root = DEFAULT_ROOT, { entry } = {}) {
+export async function startWorker(root = DEFAULT_ROOT, { entry, transportPreflight } = {}) {
   const current = await workerStatus(root);
   if (current.running) return { status:'already_running', ...current };
 
-  const configPath = process.env.AVENOX_BRIDGE_CONFIG || resolve(root, 'config.local.json');
-  const config = JSON.parse(await readFile(configPath, 'utf8'));
-  const transport = await new Bridge(config).transportContract();
+  const preflight = transportPreflight || (async () => {
+    const configPath = process.env.AVENOX_BRIDGE_CONFIG || resolve(root, 'config.local.json');
+    const config = JSON.parse(await readFile(configPath, 'utf8'));
+    return new Bridge(config).transportContract();
+  });
+  const transport = await preflight();
 
   const cli = entry || resolve(root, 'src/cli.mjs');
   const child = spawn(process.execPath, [cli, 'run'], {
