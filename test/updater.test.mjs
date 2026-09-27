@@ -32,7 +32,7 @@ async function repoFixture(t) {
   await git(source, 'remote', 'add', 'origin', remote);
   await git(source, 'push', '-u', 'origin', 'main');
 
-  await git(base, 'clone', remote, work);
+  await git(base, 'clone', '-b', 'main', remote, work);
   return { base, remote, work, source };
 }
 
