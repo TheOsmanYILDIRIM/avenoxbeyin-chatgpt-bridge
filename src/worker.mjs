@@ -185,11 +185,16 @@ export class Bridge {
     return new Map(caps.filter(x => x.available !== false).map(x => [x.name, x]));
   }
 
-  async run() {
+  async claimNext() {
     const transport = await this.transportContract();
+    return this.rpc(transport.claim_rpc);
+  }
+
+  async run() {
+    await this.transportContract();
     for (;;) {
       try {
-        const cmd = await this.rpc(transport.claim_rpc);
+        const cmd = await this.claimNext();
         if (cmd) await this.handle(cmd);
       } catch (e) {
         console.error('[bridge]', e.message);
