@@ -50,7 +50,7 @@ begin
     raise exception 'missing finish_brain_command_v2(jsonb)';
   end if;
 end
-$;
+$$;
 
 insert into public.brain_commands(operation,payload,requested_by)
 values
