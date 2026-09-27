@@ -55,6 +55,9 @@ $$;
 insert into public.brain_commands(operation,payload,requested_by)
 values
   ('brain_vault_list','{}'::jsonb,'sql-smoke-v11'),
+  ('brain_vault_find','{"query":"study"}'::jsonb,'sql-smoke-v11'),
+  ('brain_vault_search','{"query":"study"}'::jsonb,'sql-smoke-v11'),
+  ('brain_vault_read_range','{"source":"Threads.md","start_line":1,"end_line":10}'::jsonb,'sql-smoke-v11'),
   ('brain_vault_get','{"source":"Threads.md"}'::jsonb,'sql-smoke-v11'),
   ('brain_vault_update','{"source":"Threads.md","expected_sha256":"x","content":"y"}'::jsonb,'sql-smoke-v11');
 
