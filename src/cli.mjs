@@ -32,24 +32,6 @@ if (command === 'update') {
     message: 'Bridge API v3 no longer requires pairing. Full-vault access uses the authenticated Supabase queue.'
   }, null, 2));
 } else {
-    let name = 'chatgpt-project';
-    let expiresDays = 30;
-    for (let i = 0; i < extra.length; i++) {
-      if (extra[i] === '--name' && extra[i + 1]) {
-        name = extra[++i];
-      } else if (extra[i] === '--expires-days' && extra[i + 1]) {
-        expiresDays = Number(extra[++i]);
-      } else {
-        throw new Error('usage: avenox-bridge pair [--name NAME] [--expires-days N] | --list | --revoke PAIR_ID');
-      }
-    }
-    const pairing = await createPairing(DEFAULT_ROOT, { name, expiresDays });
-    console.log(JSON.stringify({
-      ...pairing,
-      warning: 'Pairing token is a secret. Store it only in the intended private ChatGPT Project and do not send it through Supabase.'
-    }, null, 2));
-  }
-} else {
   const configPath = process.env.AVENOX_BRIDGE_CONFIG || resolve(DEFAULT_ROOT, 'config.local.json');
   const config = JSON.parse(await readFile(configPath, 'utf8'));
   const bridge = new Bridge(config);
