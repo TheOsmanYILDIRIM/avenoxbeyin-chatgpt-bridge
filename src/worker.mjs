@@ -8,9 +8,12 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { CAPABILITIES, CAPABILITY_MAP, BRIDGE_API_VERSION } from './capabilities.mjs';
 
 const execFileAsync = promisify(execFile);
+const HERE = dirname(fileURLToPath(import.meta.url));
+const BRIDGE_SKILL_PATH = resolve(HERE, '..', 'skills', 'avenox-chatgpt-bridge', 'SKILL.md');
 const RECEIPT_HARNESSES = new Set(['codex','claude','antigravity','hermes','opencode','omp']);
 const JEV_FEATURES = new Set(['context','review','answer','auto_context']);
 const REMOTE_PROTECTED_BASENAMES = new Set([
@@ -403,6 +406,18 @@ export class Bridge {
     return resolve(this.c.vault_root, '.agents', 'skills');
   }
 
+  async bridgeSkill() {
+    const content = await readFile(BRIDGE_SKILL_PATH, 'utf8');
+    const description = (content.match(/^description:\s*(.+)$/m) || [])[1] || '';
+    return {
+      name: 'avenox-chatgpt-bridge',
+      description,
+      sha256: sha(content),
+      content,
+      source: 'skills/avenox-chatgpt-bridge/SKILL.md'
+    };
+  }
+
   async skillGet(name) {
     if (!/^[A-Za-z0-9_-]+$/.test(name || '')) throw new Error('invalid skill name');
     const root = await realpath(this.skillRoot());
@@ -431,6 +446,7 @@ export class Bridge {
         manifest.push({ name: s.name, description: s.description, sha256: s.sha256 });
       } catch {}
     }
+    const bridgeSkill = await this.bridgeSkill();
     const core = await this.skillGet('beyin');
     let version = 'unknown';
     try {
@@ -440,6 +456,7 @@ export class Bridge {
       task,
       brain_version: version,
       bridge_api_version: BRIDGE_API_VERSION,
+      bridge_skill: bridgeSkill,
       bridge_capabilities: await this.runtimeCapabilities(),
       core_skill: core,
       skills_manifest: manifest
@@ -543,9 +560,10 @@ export class Bridge {
     if (op === 'avenox_bootstrap') {
       return {
         kind: 'bootstrap',
-        refs: [result.core_skill.source],
+        refs: [result.bridge_skill.source, result.core_skill.source],
         text:
           `# Avenox Bootstrap\n- Brain: ${result.brain_version}\n- Bridge API: ${result.bridge_api_version}\n- Skills: ${result.skills_manifest.length}\n\n` +
+          `## Bridge Skill\n${result.bridge_skill.content}\n\n` +
           `## Bridge Capabilities\n${JSON.stringify(result.bridge_capabilities, null, 2)}\n\n` +
           `## Core Skill\n${result.core_skill.content}\n\n## Skills Manifest\n` +
           result.skills_manifest.map(
