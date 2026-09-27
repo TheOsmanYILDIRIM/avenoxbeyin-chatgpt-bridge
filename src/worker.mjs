@@ -14,6 +14,7 @@ import { CAPABILITIES, CAPABILITY_MAP, BRIDGE_API_VERSION } from './capabilities
 const execFileAsync = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BRIDGE_SKILL_PATH = resolve(HERE, '..', 'skills', 'avenox-chatgpt-bridge', 'SKILL.md');
+export const REQUIRED_TRANSPORT_SCHEMA = 9;
 const RECEIPT_HARNESSES = new Set(['codex','claude','antigravity','hermes','opencode','omp']);
 const JEV_FEATURES = new Set(['context','review','answer','auto_context']);
 const REMOTE_PROTECTED_BASENAMES = new Set([
@@ -26,6 +27,7 @@ export class Bridge {
     this.c = config;
     this.token = null;
     this._runtimeCapabilities = null;
+    this._transportContract = null;
   }
 
   async auth() {
@@ -68,11 +70,31 @@ export class Bridge {
     return text ? JSON.parse(text) : null;
   }
 
+  async transportContract() {
+    if (this._transportContract) return this._transportContract;
+    const contract = await this.rpc('bridge_transport_contract');
+    if (!contract || typeof contract !== 'object' || Array.isArray(contract)) {
+      throw coded('transport_contract_invalid', 'Bridge transport contract is missing or invalid');
+    }
+    if (!Number.isInteger(contract.schema_version) || contract.schema_version < REQUIRED_TRANSPORT_SCHEMA) {
+      throw coded(
+        'transport_schema_mismatch',
+        `Bridge requires transport schema >= ${REQUIRED_TRANSPORT_SCHEMA}; live schema is ${contract.schema_version ?? 'unknown'}`
+      );
+    }
+    if (typeof contract.claim_rpc !== 'string' || typeof contract.finish_rpc !== 'string') {
+      throw coded('transport_contract_invalid', 'Bridge transport RPC names are missing');
+    }
+    this._transportContract = contract;
+    return contract;
+  }
+
   async doctor() {
     return {
       bridge_api_version: BRIDGE_API_VERSION,
       vault_root: this.c.vault_root,
       poll_interval_ms: this.c.poll_interval_ms,
+      transport: await this.transportContract(),
       operations: await this.runtimeCapabilities()
     };
   }
@@ -164,9 +186,10 @@ export class Bridge {
   }
 
   async run() {
+    const transport = await this.transportContract();
     for (;;) {
       try {
-        const cmd = await this.rpc('claim_next_brain_command_v2');
+        const cmd = await this.rpc(transport.claim_rpc);
         if (cmd) await this.handle(cmd);
       } catch (e) {
         console.error('[bridge]', e.message);
@@ -231,7 +254,8 @@ export class Bridge {
   }
 
   async finish(cmd, status, result, error, p = {}) {
-    return this.rpc('finish_brain_command_v2', {
+    const transport = await this.transportContract();
+    return this.rpc(transport.finish_rpc, {
       p: {
         id: cmd.id,
         status,
