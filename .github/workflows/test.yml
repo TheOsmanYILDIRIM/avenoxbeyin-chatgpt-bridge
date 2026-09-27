@@ -12,10 +12,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: python -m pip install cryptography==46.0.4
       - run: npm test
 
   postgres-schema:
@@ -37,5 +33,5 @@ jobs:
       PGPASSWORD: postgres
     steps:
       - uses: actions/checkout@v4
-      - name: Apply canonical schema and verify transport contract
-        run: psql -h 127.0.0.1 -U postgres -d postgres -f test/sql-smoke.sql
+      - name: Apply canonical schema and verify transport v11
+        run: psql -h 127.0.0.1 -U postgres -d postgres -f test/sql-smoke-v11.sql
