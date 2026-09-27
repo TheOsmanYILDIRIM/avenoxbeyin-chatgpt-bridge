@@ -19,6 +19,8 @@ elif [ -e "$ROOT" ]; then
   mv "$ROOT" "$BACKUP"
   [ ! -f "$BACKUP/config.local.json" ] || cp "$BACKUP/config.local.json" "$TMP/config.local.json"
   [ ! -f "$BACKUP/.env" ] || cp "$BACKUP/.env" "$TMP/.env"
+  [ ! -f "$BACKUP/.bridge-pairings.json" ] || cp "$BACKUP/.bridge-pairings.json" "$TMP/.bridge-pairings.json"
+  [ ! -f "$TMP/.bridge-pairings.json" ] || chmod 600 "$TMP/.bridge-pairings.json"
   mv "$TMP" "$ROOT"
   echo "Eski kurulum korundu: $BACKUP"
 else
@@ -43,3 +45,5 @@ echo "Worker:     avenox-bridge start | stop | status"
 echo "Guncelleme: avenox-bridge update"
 echo "Kontrol:    avenox-bridge update --check"
 echo "Geri al:    avenox-bridge rollback"
+
+echo "Pairing:    avenox-bridge pair --name chatgpt-project"
