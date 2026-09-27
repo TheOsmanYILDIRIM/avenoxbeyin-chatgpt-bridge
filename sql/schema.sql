@@ -11,6 +11,7 @@ create table if not exists public.brain_commands (
   operation text not null check (operation in (
     'avenox_bootstrap','avenox_skill_get',
     'brain_context','brain_source_get','brain_source_update',
+    'brain_vault_list','brain_vault_get','brain_vault_update',
     'brain_note_create','brain_task_create','brain_task_update','brain_receipt',
     'brain_sync','brain_history','brain_skill_sync','brain_companion_compact',
     'brain_preferences_get','brain_preferences_update','brain_doctor',
@@ -178,7 +179,7 @@ security invoker
 set search_path=''
 as $$
   select jsonb_build_object(
-    'bridge_api_version',2,
+    'bridge_api_version',3,
     'operations',jsonb_build_array(
       'avenox_bootstrap','avenox_skill_get',
       'brain_context','brain_source_get','brain_source_update',
@@ -202,7 +203,7 @@ create table if not exists private.bridge_transport_meta (
 );
 
 insert into private.bridge_transport_meta(singleton,schema_version)
-values (true, 9)
+values (true, 10)
 on conflict (singleton) do update
 set schema_version=excluded.schema_version,
     updated_at=now();
@@ -232,7 +233,10 @@ begin
     'schema_version', v_version,
     'claim_rpc', 'claim_next_brain_command_v2',
     'finish_rpc', 'finish_brain_command_v2',
-    'command_terminal_statuses', jsonb_build_array('completed','failed','conflict')
+    'command_terminal_statuses', jsonb_build_array('completed','failed','conflict'),
+    'secure_envelope_version', 1,
+    'secure_cipher', 'AES-256-GCM',
+    'secure_result_field', 'result'
   );
 end;
 $$;
