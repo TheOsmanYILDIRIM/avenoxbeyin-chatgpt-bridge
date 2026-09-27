@@ -50,6 +50,37 @@ export const CAPABILITIES = [
     }, additionalProperties:false }
   },
   {
+    name: 'brain_vault_find',
+    mode: 'read',
+    description: 'Find vault files by case-insensitive path/name substring without reading file contents.',
+    maps_to: 'trusted vault path discovery',
+    transport: 'trusted_supabase_queue',
+    payload_schema: { type:'object', required:['query'], properties:{
+      query:{type:'string'}, path:{type:'string'}, max_results:{type:'integer'}
+    }, additionalProperties:false }
+  },
+  {
+    name: 'brain_vault_search',
+    mode: 'read',
+    description: 'Search allowed text files in the vault for an exact text substring and return bounded line excerpts.',
+    maps_to: 'trusted vault content search',
+    transport: 'trusted_supabase_queue',
+    payload_schema: { type:'object', required:['query'], properties:{
+      query:{type:'string'}, path:{type:'string'}, extensions:{type:'array',items:{type:'string'}},
+      case_sensitive:{type:'boolean'}, max_results:{type:'integer'}, max_matches_per_file:{type:'integer'}
+    }, additionalProperties:false }
+  },
+  {
+    name: 'brain_vault_read_range',
+    mode: 'read',
+    description: 'Read a bounded line range from one exact allowed text file and return the file SHA-256.',
+    maps_to: 'trusted exact vault ranged read',
+    transport: 'trusted_supabase_queue',
+    payload_schema: { type:'object', required:['source','start_line','end_line'], properties:{
+      source:{type:'string'}, start_line:{type:'integer'}, end_line:{type:'integer'}
+    }, additionalProperties:false }
+  },
+  {
     name: 'brain_vault_get',
     mode: 'read',
     description: 'Read one exact text file in the Brain vault, including companion/private Markdown, through the trusted Supabase queue.',
