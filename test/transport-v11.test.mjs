@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 test('worker, canonical schema and migration chain agree on transport v11', async () => {
-  const [worker, capabilities, schema, migration009, migration010, migration011] = await Promise.all([
+  const [worker, capabilities, schema, migration009, migration010, migration011, migration012] = await Promise.all([
     readFile(new URL('../src/worker.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/capabilities.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../sql/schema.sql', import.meta.url), 'utf8'),
     readFile(new URL('../sql/migrations/009_transport_contract_v3.sql', import.meta.url), 'utf8'),
     readFile(new URL('../sql/migrations/010_secure_paired_full_vault.sql', import.meta.url), 'utf8'),
-    readFile(new URL('../sql/migrations/011_trusted_full_vault_transport.sql', import.meta.url), 'utf8')
+    readFile(new URL('../sql/migrations/011_trusted_full_vault_transport.sql', import.meta.url), 'utf8'),
+    readFile(new URL('../sql/migrations/012_restore_canonical_v11.sql', import.meta.url), 'utf8')
   ]);
 
   assert.match(worker, /REQUIRED_TRANSPORT_SCHEMA\s*=\s*11/);
@@ -31,6 +32,10 @@ test('worker, canonical schema and migration chain agree on transport v11', asyn
   assert.match(migration010, /schema_version=10/i);
   assert.match(migration011, /schema_version=11/i);
   assert.match(migration011, /'vault_transport',\s*'trusted_supabase_queue'/i);
+
+  assert.match(migration012, /schema_version=11/i);
+  assert.match(migration012, /'vault_transport',\s*'trusted_supabase_queue'/i);
+  assert.doesNotMatch(migration012, /brain_shell_exec|owner_shell/);
 });
 
 test('fresh-install schema contains full-vault operations and dynamic claim/finish RPCs', async () => {
