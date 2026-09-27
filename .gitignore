@@ -5,3 +5,4 @@ config.local.json
 .DS_Store
 .bridge-update.json
 .bridge-worker.json\n.bridge-worker.log\n
+.bridge-pairings.json
