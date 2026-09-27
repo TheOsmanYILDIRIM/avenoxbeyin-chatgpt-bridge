@@ -1,9 +1,9 @@
 {
   "name": "avenoxbeyin-chatgpt-bridge",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": false,
   "type": "module",
-  "description": "ChatGPT Web bridge for Avenox Beyin V3 using Supabase as a secure command/response transport.",
+  "description": "ChatGPT Web bridge for Avenox Beyin V3 with versioned Supabase transport and paired AES-GCM full-vault access.",
   "license": "MIT",
   "engines": {
     "node": ">=20"
