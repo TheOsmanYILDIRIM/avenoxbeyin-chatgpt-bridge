@@ -2,8 +2,8 @@ export const CAPABILITIES = [
   {
     name: 'avenox_bootstrap',
     mode: 'read',
-    description: 'Return the current Avenox working contract, core skill, version and skill manifest.',
-    maps_to: 'local skill files + .beyin-version',
+    description: 'Return the current Bridge skill, capability catalog, Avenox core skill, version and skill manifest.',
+    maps_to: 'versioned Bridge skill + local Avenox skill files + .beyin-version',
     payload_schema: { type:'object', properties:{ task:{type:'string'} }, additionalProperties:false }
   },
   {
