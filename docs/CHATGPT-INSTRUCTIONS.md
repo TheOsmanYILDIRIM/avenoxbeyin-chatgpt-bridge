@@ -25,7 +25,7 @@ select private.brain_capabilities() as capabilities;
 
 Use the normal queue/result flow.
 
-1. Insert one command into `public.brain_commands` with a unique idempotency key.
+1. Insert one command into `public.brain_commands`. Normally omit `idempotency_key`; the database generates it automatically. Reuse an explicit key only when deliberately retrying the same logical enqueue.
 2. Wait long enough for the worker polling interval.
 3. Read only that command's `status`, `claimed_at`, and projected response from `public.brain_responses`.
 4. If still pending/claimed/running, perform at most one additional result check unless the user explicitly asks to keep waiting.
@@ -40,7 +40,7 @@ Do not maintain an idle heartbeat. The queue itself is the liveness probe.
 - If the second check is still `pending` and `claimed_at is null`, tell the user: **"⚠️ Avenox worker bu komutu alamıyor. Termux'taki Bridge worker kapalı veya bağlantısı kesilmiş olabilir."**
 - This is a liveness inference, not proof that Termux itself is closed.
 - Do not create a replacement command. Keep the existing command ID so the worker can claim it when it becomes available.
-- If status is `claimed` or `running`, the worker has already picked up the command; do not show the unavailable warning solely because execution is taking time.
+- If status is `claimed` or `running`, the worker has already picked up the command. Command handling is bounded by the worker timeout; stale claims are closed by the next worker claim cycle instead of remaining stuck indefinitely.
 
 Do not use the removed experimental `brain_execute` procedure.
 
