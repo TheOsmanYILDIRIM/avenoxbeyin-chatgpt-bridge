@@ -163,8 +163,7 @@ export class Bridge {
   async run() {
     for (;;) {
       try {
-        const claimed = await this.rpc('claim_next_brain_command');
-        const cmd = Array.isArray(claimed) ? claimed[0] : claimed;
+        const cmd = await this.rpc('claim_next_brain_command_v2');
         if (cmd) await this.handle(cmd);
       } catch (e) {
         console.error('[bridge]', e.message);
@@ -175,8 +174,9 @@ export class Bridge {
 
   async handle(cmd) {
     const timeoutMs = Number(this.c.operation_timeout_ms || 15000);
+    let outcome;
     try {
-      const outcome = await withTimeout((async () => {
+      outcome = await withTimeout((async () => {
         const supported = await this.supportedCapabilityMap();
         if (!supported.has(cmd.operation)) {
           const caps = await this.runtimeCapabilities();
@@ -204,22 +204,27 @@ export class Bridge {
           projection: this.project(cmd.operation, result)
         };
       })(), timeoutMs, cmd.operation);
-
-      await this.finish(
-        cmd,
-        outcome.terminal_status,
-        outcome.result,
-        outcome.error,
-        outcome.projection
-      );
     } catch (e) {
       const error = {
         error: e.code || 'operation_failed',
         message: e.message
       };
       if (e.brain_error) error.brain_error = e.brain_error;
-      await this.finish(cmd, e.code === 'conflict' ? 'conflict' : 'failed', null, error);
+      outcome = {
+        terminal_status: e.code === 'conflict' ? 'conflict' : 'failed',
+        result: null,
+        error,
+        projection: {}
+      };
     }
+
+    await this.finish(
+      cmd,
+      outcome.terminal_status,
+      outcome.result,
+      outcome.error,
+      outcome.projection
+    );
   }
 
   async finish(cmd, status, result, error, p = {}) {
