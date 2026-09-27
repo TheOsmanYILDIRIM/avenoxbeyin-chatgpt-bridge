@@ -28,7 +28,13 @@ ChatGPT Web
 - use Drive only as an optional readable fallback
 - warn about an unavailable worker from an unclaimed pending command, without idle heartbeat writes
 
-## Transport\n\nThe default transport is the normal queue/result flow: ChatGPT enqueues a command, the authenticated worker executes it locally, then ChatGPT reads that command's projected response. An experimental long-running SQL fast path was removed because some ChatGPT/Supabase security layers reject it.\n\n## Operations
+## Transport
+
+The default transport is the normal queue/result flow: ChatGPT enqueues a command, the authenticated worker executes it locally, then ChatGPT reads that command's projected response.
+
+Bridge API v3 adds an optional **paired secure full-vault path** for trusted ChatGPT Projects. Secure vault commands use AES-256-GCM envelopes; Supabase carries ciphertext while the pairing secret remains only in the local Bridge installation and the intended private ChatGPT Project. Secure results are returned encrypted in `brain_commands.result`, not plaintext `brain_responses`.
+
+## Operations
 
 The Bridge now exposes a machine-readable capability catalog covering context/source reads, note/task/receipt writes, sync/history/skill-sync, companion compact, preferences, update/rollback/recover, Jev controls, bootstrap and skill reads. The generic worker maps each operation to a validated Avenox entry point and never exposes arbitrary shell execution.
 
@@ -38,7 +44,7 @@ The Bridge now exposes a machine-readable capability catalog covering context/so
 npm test
 ```
 
-The test suite covers the remote source privacy gate, CAS update behavior, structured Brain CLI error mapping, and capability discovery for commands dispatched outside the normal top-level help parser.
+The test suite covers CAS updates, structured Brain CLI error mapping, capability discovery, transport-contract drift, secure pairing, tamper/replay rejection, companion/full-vault access rules, Python↔Node crypto interoperability, and a real PostgreSQL fresh-install schema smoke test.
 
 ## Requirements
 
@@ -78,14 +84,15 @@ The updater only accepts a clean Git checkout and a fast-forward from `origin/ma
 6. Run `npm start`.
 7. Add `docs/CHATGPT-INSTRUCTIONS.md` to your ChatGPT Project instructions and connect the Supabase plugin.
 8. Use the normal queue/result flow; do not use the removed experimental `brain_execute` procedure.
+9. Optional full-vault mode: run `avenox-bridge pair --name chatgpt-project`, store the returned token only in the intended private ChatGPT Project, and follow `docs/SECURE-PAIRING.md`.
 
 ## Status
 
-The generic worker now implements the Bridge API v2 capability catalog. It covers live context/source reads, note/task/receipt writes, sync/history/skill reconciliation, companion maintenance, preferences, update lifecycle and Jev controls through validated adapters. Bootstrap returns the machine-readable capability catalog so AI clients do not need to guess operation names or payloads.
+The generic worker now implements Bridge API v3. Bootstrap returns the versioned Bridge skill, capability catalog, Avenox core skill, skill manifest, and secure-pairing status so AI clients do not guess operation names, payloads, or transport behavior.
 
 The worker never exposes arbitrary shell execution. Existing Markdown replacement is CAS-protected with SHA-256 and task sources are forced through the official task transaction.
 
-Exact remote source reads/writes also enforce a small privacy boundary: Companion/identity sources and Markdown explicitly marked private, local-only, or sensitive are rejected before content is returned or changed.
+Unpaired exact source operations retain the conservative remote privacy gate. Paired secure operations (`brain_vault_list`, `brain_vault_get`, `brain_vault_update`) can access the trusted Brain vault, including companion/private Markdown, while still blocking obvious credential/runtime files, path traversal, symlink escape, binary sources, and unsafe remote writes.
 
 ## Upstream contribution path
 
