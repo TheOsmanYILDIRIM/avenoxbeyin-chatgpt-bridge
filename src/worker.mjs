@@ -9,16 +9,13 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { CAPABILITIES, CAPABILITY_MAP, BRIDGE_API_VERSION } from './capabilities.mjs';
-import {
-  decryptPairedCommand, encryptPairedResult, secureTransportStatus
-} from './secure.mjs';
+import { CAPABILITIES, BRIDGE_API_VERSION } from './capabilities.mjs';
 
 const execFileAsync = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BRIDGE_ROOT = resolve(HERE, '..');
 const BRIDGE_SKILL_PATH = resolve(BRIDGE_ROOT, 'skills', 'avenox-chatgpt-bridge', 'SKILL.md');
-export const REQUIRED_TRANSPORT_SCHEMA = 10;
+export const REQUIRED_TRANSPORT_SCHEMA = 11;
 const RECEIPT_HARNESSES = new Set(['codex','claude','antigravity','hermes','opencode','omp']);
 const JEV_FEATURES = new Set(['context','review','answer','auto_context']);
 const REMOTE_PROTECTED_BASENAMES = new Set([
@@ -89,19 +86,11 @@ export class Bridge {
     if (typeof contract.claim_rpc !== 'string' || typeof contract.finish_rpc !== 'string') {
       throw coded('transport_contract_invalid', 'Bridge transport RPC names are missing');
     }
-    if (
-      contract.secure_envelope_version !== 1 ||
-      contract.secure_cipher !== 'AES-256-GCM' ||
-      contract.secure_result_field !== 'result'
-    ) {
-      throw coded('transport_contract_invalid', 'Bridge secure transport contract is missing or incompatible');
+    if (contract.vault_transport !== 'trusted_supabase_queue') {
+      throw coded('transport_contract_invalid', 'Bridge vault transport contract is missing or incompatible');
     }
     this._transportContract = contract;
     return contract;
-  }
-
-  pairingRoot() {
-    return this.c.bridge_root || BRIDGE_ROOT;
   }
 
   async doctor() {
@@ -110,7 +99,6 @@ export class Bridge {
       vault_root: this.c.vault_root,
       poll_interval_ms: this.c.poll_interval_ms,
       transport: await this.transportContract(),
-      secure_transport: await secureTransportStatus(this.pairingRoot()),
       operations: await this.runtimeCapabilities()
     };
   }
@@ -220,9 +208,6 @@ export class Bridge {
   }
 
   async handle(cmd) {
-    if (CAPABILITY_MAP.get(cmd.operation)?.secure_transport_required === true) {
-      return this.handleSecure(cmd);
-    }
     const timeoutMs = Number(this.c.operation_timeout_ms || 15000);
     let outcome;
     try {
@@ -264,65 +249,6 @@ export class Bridge {
         terminal_status: e.code === 'conflict' ? 'conflict' : 'failed',
         result: null,
         error,
-        projection: {}
-      };
-    }
-
-    await this.finish(
-      cmd,
-      outcome.terminal_status,
-      outcome.result,
-      outcome.error,
-      outcome.projection
-    );
-  }
-
-  async handleSecure(cmd) {
-    const timeoutMs = Number(this.c.operation_timeout_ms || 15000);
-    let secureContext = null;
-    let outcome;
-    try {
-      outcome = await withTimeout((async () => {
-        const supported = await this.supportedCapabilityMap();
-        const capability = supported.get(cmd.operation);
-        if (!capability || capability.secure_transport_required !== true) {
-          throw coded('invalid_operation', 'secure operation is not available');
-        }
-
-        secureContext = await decryptPairedCommand(
-          this.pairingRoot(),
-          cmd.operation,
-          cmd.payload || {}
-        );
-
-        const result = await this.execute(cmd.operation, secureContext.payload || {});
-        const projection = this.project(cmd.operation, result);
-        return {
-          terminal_status: 'completed',
-          result: encryptPairedResult(secureContext, cmd.operation, {
-            ok: true,
-            result,
-            projection
-          }),
-          error: null,
-          projection: {}
-        };
-      })(), timeoutMs, cmd.operation);
-    } catch (e) {
-      const detail = {
-        error: e.code || 'operation_failed',
-        message: e.message
-      };
-      if (e.brain_error) detail.brain_error = e.brain_error;
-
-      const encrypted = secureContext
-        ? encryptPairedResult(secureContext, cmd.operation, { ok:false, error:detail })
-        : null;
-
-      outcome = {
-        terminal_status: e.code === 'conflict' ? 'conflict' : 'failed',
-        result: encrypted,
-        error: secureContext ? { error:'secure_operation_failed' } : detail,
         projection: {}
       };
     }
@@ -572,7 +498,6 @@ export class Bridge {
       task,
       brain_version: version,
       bridge_api_version: BRIDGE_API_VERSION,
-      secure_transport: await secureTransportStatus(this.pairingRoot()),
       bridge_skill: bridgeSkill,
       bridge_capabilities: await this.runtimeCapabilities(),
       core_skill: core,
