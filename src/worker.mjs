@@ -14,7 +14,7 @@ import { CAPABILITIES, BRIDGE_API_VERSION } from './capabilities.mjs';
 const execFileAsync = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BRIDGE_ROOT = resolve(HERE, '..');
-const BRIDGE_SKILL_PATH = resolve(BRIDGE_ROOT, 'skills', 'avenox-chatgpt-bridge', 'SKILL.md');
+const BRIDGE_SKILL_PATH = resolve(BRIDGE_ROOT, 'skills', 'avenox-chatgpt-bridge', 'SKILL.v3.md');
 export const REQUIRED_TRANSPORT_SCHEMA = 11;
 const RECEIPT_HARNESSES = new Set(['codex','claude','antigravity','hermes','opencode','omp']);
 const JEV_FEATURES = new Set(['context','review','answer','auto_context']);
@@ -471,7 +471,7 @@ export class Bridge {
       description,
       sha256: sha(content),
       content,
-      source: 'skills/avenox-chatgpt-bridge/SKILL.md'
+      source: 'skills/avenox-chatgpt-bridge/SKILL.v3.md'
     };
   }
 
