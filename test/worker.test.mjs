@@ -141,6 +141,9 @@ test('transport contract accepts required schema and dynamic RPC names', async t
       schema_version: 10,
       claim_rpc: 'claim_dynamic',
       finish_rpc: 'finish_dynamic',
+      secure_envelope_version: 1,
+      secure_cipher: 'AES-256-GCM',
+      secure_result_field: 'result',
       command_terminal_statuses: ['completed','failed','conflict']
     };
   };
@@ -181,7 +184,10 @@ test('claim and finish use RPC names from live transport contract', async t => {
   bridge._transportContract = {
     schema_version: 10,
     claim_rpc: 'claim_dynamic',
-    finish_rpc: 'finish_dynamic'
+    finish_rpc: 'finish_dynamic',
+    secure_envelope_version: 1,
+    secure_cipher: 'AES-256-GCM',
+    secure_result_field: 'result'
   };
   bridge.rpc = async (name, body = {}) => {
     calls.push({ name, body });
@@ -312,4 +318,22 @@ test('secure worker handling keeps vault content out of plaintext response field
   );
   assert.equal(decoded.ok, true);
   assert.equal(decoded.result.content, content);
+});
+
+
+test('transport contract rejects incompatible secure crypto metadata', async t => {
+  const { bridge } = await fixture(t);
+  bridge.rpc = async () => ({
+    schema_version: 10,
+    claim_rpc: 'claim_dynamic',
+    finish_rpc: 'finish_dynamic',
+    secure_envelope_version: 1,
+    secure_cipher: 'AES-128-GCM',
+    secure_result_field: 'result'
+  });
+
+  await assert.rejects(
+    () => bridge.transportContract(),
+    error => error?.code === 'transport_contract_invalid'
+  );
 });
