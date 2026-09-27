@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 test('worker, canonical schema and migration chain agree on transport v11', async () => {
-  const [worker, schema, migration009, migration010, migration011] = await Promise.all([
+  const [worker, capabilities, schema, migration009, migration010, migration011] = await Promise.all([
     readFile(new URL('../src/worker.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../src/capabilities.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../sql/schema.sql', import.meta.url), 'utf8'),
     readFile(new URL('../sql/migrations/009_transport_contract_v3.sql', import.meta.url), 'utf8'),
     readFile(new URL('../sql/migrations/010_secure_paired_full_vault.sql', import.meta.url), 'utf8'),
@@ -13,6 +14,13 @@ test('worker, canonical schema and migration chain agree on transport v11', asyn
 
   assert.match(worker, /REQUIRED_TRANSPORT_SCHEMA\s*=\s*11/);
   assert.match(worker, /vault_transport !== 'trusted_supabase_queue'/);
+  assert.doesNotMatch(worker, /brain_shell_exec|owner_shell|shell-mode/);
+  assert.doesNotMatch(worker, /REQUIRED_TRANSPORT_SCHEMA\s*=\s*12/);
+
+  assert.doesNotMatch(capabilities, /brain_shell_exec/);
+  assert.doesNotMatch(capabilities, /secure_transport_required/);
+  assert.doesNotMatch(capabilities, /AES-256-GCM|paired client view/);
+  assert.match(capabilities, /transport:\s*'trusted_supabase_queue'/);
 
   assert.match(schema, /values\s*\(true,\s*11\)/i);
   assert.match(schema, /'vault_transport',\s*'trusted_supabase_queue'/i);
