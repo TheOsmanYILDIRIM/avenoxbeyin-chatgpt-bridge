@@ -5,18 +5,24 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { Bridge } from '../src/worker.mjs';
+import {
+  createPairing, encryptCommandWithToken, decryptResultWithToken
+} from '../src/secure.mjs';
 
 async function fixture(t, script = 'console.log(JSON.stringify({status:"ok"}))') {
   const vault = await mkdtemp(join(tmpdir(), 'avenox-bridge-test-'));
+  const bridgeRoot = await mkdtemp(join(tmpdir(), 'avenox-bridge-root-test-'));
   t.after(() => rm(vault, { recursive:true, force:true }));
+  t.after(() => rm(bridgeRoot, { recursive:true, force:true }));
   await writeFile(join(vault, 'beyin.py'), script, 'utf8');
   const bridge = new Bridge({
     vault_root: vault,
+    bridge_root: bridgeRoot,
     python: process.execPath,
     max_source_bytes: 262144,
     poll_interval_ms: 5
   });
-  return { vault, bridge };
+  return { vault, bridgeRoot, bridge };
 }
 
 function sha(text) {
@@ -211,4 +217,99 @@ test('bootstrap always includes versioned bridge_skill plus core skill and manif
   assert.match(result.bridge_skill.sha256, /^[a-f0-9]{64}$/);
   assert.equal(result.core_skill.name, 'beyin');
   assert.equal(result.skills_manifest.some(x => x.name === 'beyin'), true);
+});
+
+
+test('paired vault read can access companion files while generic source access remains blocked', async t => {
+  const { vault, bridge } = await fixture(t);
+  const body = '# Threads\n\nOpen work';
+  await writeFile(join(vault, 'Threads.md'), body);
+
+  await assert.rejects(
+    () => bridge.sourceGet('Threads.md'),
+    error => error?.code === 'access_denied_private_source'
+  );
+
+  const paired = await bridge.vaultGet('Threads.md');
+  assert.equal(paired.content, body);
+  assert.equal(paired.writable, true);
+});
+
+test('paired vault protects credentials and runtime secret files', async t => {
+  const { vault, bridge } = await fixture(t);
+  await writeFile(join(vault, '.env'), 'SECRET=canary');
+  await writeFile(join(vault, 'credentials.json'), '{"token":"canary"}');
+
+  for (const source of ['.env','credentials.json']) {
+    await assert.rejects(
+      () => bridge.vaultGet(source),
+      error => error?.code === 'vault_access_denied'
+    );
+  }
+});
+
+test('paired companion update keeps CAS and task revision safety', async t => {
+  const { vault, bridge } = await fixture(t);
+  const current = '# Last Session\nold';
+  const next = '# Last Session\nnew';
+  await writeFile(join(vault, 'Last-Session.md'), current);
+
+  const updated = await bridge.vaultUpdate({
+    source:'Last-Session.md',
+    expected_sha256:sha(current),
+    content:next
+  });
+  assert.equal(updated.sha256, sha(next));
+
+  await mkdir(join(vault, 'tasks'), { recursive:true });
+  const task = '---\nkind: task\nrevision: 1\n---\nwork';
+  await writeFile(join(vault, 'tasks', 'one.md'), task);
+  await assert.rejects(
+    () => bridge.vaultUpdate({
+      source:'tasks/one.md',
+      expected_sha256:sha(task),
+      content:task + '\nchanged'
+    }),
+    /task sources must use brain_task_update/
+  );
+});
+
+test('secure worker handling keeps vault content out of plaintext response fields', async t => {
+  const { vault, bridgeRoot, bridge } = await fixture(t);
+  const content = '# Core\nprivate companion canary';
+  await writeFile(join(vault, 'Core.md'), content);
+
+  const pairing = await createPairing(bridgeRoot, {
+    name:'worker-test',
+    expiresDays:30
+  });
+  const envelope = encryptCommandWithToken(
+    pairing.token,
+    'brain_vault_get',
+    { source:'Core.md' }
+  );
+
+  let finished;
+  bridge.finish = async (cmd, status, result, error, projection) => {
+    finished = { cmd, status, result, error, projection };
+  };
+
+  await bridge.handle({
+    id:'secure-command-1',
+    operation:'brain_vault_get',
+    payload:envelope
+  });
+
+  assert.equal(finished.status, 'completed');
+  assert.equal(finished.error, null);
+  assert.deepEqual(finished.projection, {});
+  assert.equal(JSON.stringify(finished.result).includes('private companion canary'), false);
+
+  const decoded = decryptResultWithToken(
+    pairing.token,
+    'brain_vault_get',
+    finished.result
+  );
+  assert.equal(decoded.ok, true);
+  assert.equal(decoded.result.content, content);
 });
