@@ -10,6 +10,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { CAPABILITIES, BRIDGE_API_VERSION } from './capabilities.mjs';
+import { appendCommandLog } from './telemetry.mjs';
 
 const execFileAsync = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -29,6 +30,8 @@ export class Bridge {
     this.token = null;
     this._runtimeCapabilities = null;
     this._transportContract = null;
+    this._workerCommit = undefined;
+    this._brainVersion = undefined;
   }
 
   async auth() {
@@ -223,6 +226,7 @@ export class Bridge {
   }
 
   async handle(cmd) {
+    const startedAtMs = Date.now();
     const timeoutMs = Number(this.c.operation_timeout_ms || 15000);
     let outcome;
     try {
@@ -268,13 +272,25 @@ export class Bridge {
       };
     }
 
-    await this.finish(
-      cmd,
-      outcome.terminal_status,
-      outcome.result,
-      outcome.error,
-      outcome.projection
-    );
+    let finishError = null;
+    try {
+      await this.finish(
+        cmd,
+        outcome.terminal_status,
+        outcome.result,
+        outcome.error,
+        outcome.projection
+      );
+    } catch (error) {
+      finishError = error;
+      throw error;
+    } finally {
+      try {
+        await this.logCommandTelemetry(cmd, outcome, startedAtMs, finishError);
+      } catch (error) {
+        console.error('[bridge-telemetry]', error.message);
+      }
+    }
   }
 
   async finish(cmd, status, result, error, p = {}) {
@@ -289,6 +305,56 @@ export class Bridge {
         source_refs: p.refs ?? [],
         response_kind: p.kind ?? null
       }
+    });
+  }
+
+  async workerCommit() {
+    if (this._workerCommit !== undefined) return this._workerCommit;
+    try {
+      const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], {
+        cwd: BRIDGE_ROOT,
+        windowsHide: true,
+        timeout: 2000,
+        maxBuffer: 64 * 1024
+      });
+      this._workerCommit = String(stdout || '').trim() || null;
+    } catch {
+      this._workerCommit = null;
+    }
+    return this._workerCommit;
+  }
+
+  async brainVersion() {
+    if (this._brainVersion !== undefined) return this._brainVersion;
+    try {
+      this._brainVersion = (await readFile(resolve(this.c.vault_root, '.beyin-version'), 'utf8')).trim() || null;
+    } catch {
+      this._brainVersion = null;
+    }
+    return this._brainVersion;
+  }
+
+  async logCommandTelemetry(cmd, outcome, startedAtMs, finishError) {
+    const finishedAtMs = Date.now();
+    const createdAtMs = parseTimestampMs(cmd.created_at);
+    const claimedAtMs = parseTimestampMs(cmd.claimed_at);
+
+    await appendCommandLog(BRIDGE_ROOT, {
+      ts: new Date(finishedAtMs).toISOString(),
+      command_id: cmd.id || null,
+      operation: cmd.operation || null,
+      terminal_status: outcome?.terminal_status || null,
+      error_code: outcome?.error?.error || null,
+      finish_ok: finishError == null,
+      finish_error_code: finishError?.code || null,
+      queued_ms: durationMs(createdAtMs, claimedAtMs),
+      claim_to_start_ms: durationMs(claimedAtMs, startedAtMs),
+      execution_ms: durationMs(startedAtMs, finishedAtMs),
+      total_ms: durationMs(createdAtMs, finishedAtMs),
+      worker_commit: await this.workerCommit(),
+      brain_version: await this.brainVersion()
+    }, {
+      maxBytes: Number(this.c.command_log_max_bytes || 5 * 1024 * 1024)
     });
   }
 
@@ -974,6 +1040,17 @@ function coded(code, message) {
   e.code = code;
   return e;
 }
+function parseTimestampMs(value) {
+  if (typeof value !== 'string' || !value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function durationMs(start, end) {
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return Math.max(0, Math.round(end - start));
+}
+
 function withTimeout(promise, ms, operation) {
   let timer;
   return Promise.race([
