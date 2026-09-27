@@ -1,70 +1,97 @@
 # Avenox Beyin ChatGPT Bridge
 
-A host-agnostic bridge that lets **ChatGPT Web** use the live, local **Avenox Beyin V3** memory and skill system through Supabase.
+Independent community adapter that lets **ChatGPT Web** work with a live, local **Avenox Beyin V3** through the user's own Supabase project.
 
-Upstream project: `avenoxai/avenoxbeyin` (Avenox Beyin V3). This repository is an independent integration/adapter and does not replace the upstream Brain engine.
+Upstream: `avenoxai/avenoxbeyin`.
 
-## Why
+**This repository is intentionally separate from Avenox Beyin core.** It does not require an Avenox core patch, does not add Node or Supabase as Avenox dependencies, and does not change Avenox's local-first defaults.
 
-ChatGPT Web cannot directly execute a user's local `beyin.py`. This bridge turns Supabase into a narrow command/result transport while the real Brain stays local and authoritative.
+## Architecture
 
 ```text
 ChatGPT Web
-  -> enqueue one brain_commands row
-  -> Supabase brain_commands
-  -> local worker (Linux/macOS/Windows/Termux/etc.)
-  -> Avenox Beyin / beyin.py / live skills
-  -> brain_responses
-  -> same open ChatGPT tool call returns the result
+  -> user's Supabase project
+  -> public.brain_commands queue
+  -> authenticated local Bridge worker
+  -> Avenox Beyin / beyin.py / vault
+  -> brain_responses / command result
+  -> ChatGPT Web
 ```
 
-## Goals
+Supabase is the remote transport. Avenox Beyin remains the local source of truth.
 
-- no Termux dependency
-- no service-role secret on the worker
-- preserve Avenox Beyin transaction semantics
-- dynamically expose current Avenox skills to ChatGPT
-- keep project source code in GitHub, not in Brain
-- use Drive only as an optional readable fallback
-- warn about an unavailable worker from an unclaimed pending command, without idle heartbeat writes
+## Current model — Bridge API v3
 
-## Transport
+The worker discovers and publishes a live capability catalog at bootstrap. ChatGPT must use that catalog instead of guessing operation names or payloads.
 
-The default transport is the normal queue/result flow: ChatGPT enqueues a command, the authenticated worker executes it locally, then ChatGPT reads that command's projected response.
+Full Brain continuity is available through:
 
-Bridge API v3 adds an optional **paired secure full-vault path** for trusted ChatGPT Projects. Secure vault commands use AES-256-GCM envelopes; Supabase carries ciphertext while the pairing secret remains only in the local Bridge installation and the intended private ChatGPT Project. Secure results are returned encrypted in `brain_commands.result`, not plaintext `brain_responses`.
+- `brain_vault_list`
+- `brain_vault_get`
+- `brain_vault_update`
 
-## Operations
+These use the normal authenticated Supabase queue. There is no pairing token or client-side encryption requirement.
 
-The Bridge now exposes a machine-readable capability catalog covering context/source reads, note/task/receipt writes, sync/history/skill-sync, companion compact, preferences, update/rollback/recover, Jev controls, bootstrap and skill reads. The generic worker maps each operation to a validated Avenox entry point and never exposes arbitrary shell execution.
+The vault path supports companion/private Brain Markdown needed for continuity, including files such as `Core.md`, `Soul.md`, `Kurallar.md`, `Last-Session.md`, `Threads.md`, and `Journal.md`.
 
-## Tests
+## Security boundary
 
-```sh
-npm test
-```
+Full vault access is **not** remote shell access.
 
-The test suite covers CAS updates, structured Brain CLI error mapping, capability discovery, transport-contract drift, secure pairing, tamper/replay rejection, companion/full-vault access rules, Python↔Node crypto interoperability, and a real PostgreSQL fresh-install schema smoke test.
+The Bridge keeps:
 
-## Requirements
+- dedicated authenticated worker identity and worker allowlist
+- operation whitelist and payload validation
+- versioned DB/worker transport handshake
+- vault-root containment
+- path traversal and symlink-escape rejection
+- credential/runtime file denylist
+- binary/unsafe source restrictions
+- SHA-256 CAS for content updates
+- revision-aware task transactions
+- no arbitrary shell execution
 
-- Avenox Beyin V3 installed locally
+Generic `brain_source_*` operations retain their conservative source/privacy behavior. Trusted continuity access uses the explicit `brain_vault_*` capabilities.
+
+## Capabilities
+
+The live catalog currently covers bootstrap/skills, context, exact source and vault access, notes, tasks, receipts, sync/history, skill sync, companion maintenance, preferences, Brain lifecycle/update operations and Jev controls.
+
+Availability is runtime-probed. The bootstrap result is authoritative.
+
+## Host model
+
+The Bridge is host-agnostic. Termux is one supported host, not an architectural dependency.
+
+Requirements:
+
+- local Avenox Beyin V3
 - Node.js 20+
 - Python supported by Avenox Beyin
-- Supabase project
-- Supabase Auth user dedicated to the worker
+- user's Supabase project
+- dedicated Supabase Auth worker user
 
-## Install and update
-
-For a managed local checkout, install once:
+## Install
 
 ```sh
 sh scripts/install.sh
 ```
 
-The installer clones the Bridge to `~/.local/share/avenox-brain-bridge`, runs the tests, and creates an `avenox-bridge` command under `~/.local/bin`. If an older non-Git Bridge already exists there, it is moved to a timestamped backup first; `config.local.json` and `.env` are copied into the new checkout instead of being discarded.
+Managed checkout:
 
-After that, updates follow the same small command shape as Avenox Beyin:
+```text
+~/.local/share/avenox-brain-bridge
+```
+
+Worker lifecycle:
+
+```sh
+avenox-bridge start
+avenox-bridge status
+avenox-bridge stop
+```
+
+Updates:
 
 ```sh
 avenox-bridge update --check
@@ -72,31 +99,61 @@ avenox-bridge update
 avenox-bridge rollback
 ```
 
-The updater only accepts a clean Git checkout and a fast-forward from `origin/main`. It runs `npm test` after updating; if the tests fail, it automatically resets to the previous commit. `config.local.json` and `.env` are ignored by Git and remain untouched. A successful update returns `restart_required: true`; restart the existing worker process so it loads the new code.
+The updater requires a clean Git checkout and fast-forward update. It runs the test suite before accepting the new revision and rolls back on failure.
 
-## Quick start
+## Database compatibility
 
-1. Apply `sql/schema.sql` to a Supabase project.
-2. Create a normal Supabase Auth user for the worker.
-3. Insert that user's UUID into `private.bridge_workers` from a trusted admin session.
-4. Copy `examples/config.example.json` to `config.local.json`.
-5. Put the worker password in the environment variable named by `worker_password_env`.
-6. Run `npm start`.
-7. Add `docs/CHATGPT-INSTRUCTIONS.md` to your ChatGPT Project instructions and connect the Supabase plugin.
-8. Use the normal queue/result flow; do not use the removed experimental `brain_execute` procedure.
-9. Optional full-vault mode: run `avenox-bridge pair --name chatgpt-project`, store the returned token only in the intended private ChatGPT Project, and follow `docs/SECURE-PAIRING.md`.
+Bridge code and Supabase transport schema are treated as one release contract.
 
-## Status
+Current worker requirement:
 
-The generic worker now implements Bridge API v3. Bootstrap returns the versioned Bridge skill, capability catalog, Avenox core skill, skill manifest, and secure-pairing status so AI clients do not guess operation names, payloads, or transport behavior.
+```text
+transport schema >= 11
+vault_transport = trusted_supabase_queue
+```
 
-The worker never exposes arbitrary shell execution. Existing Markdown replacement is CAS-protected with SHA-256 and task sources are forced through the official task transaction.
+Worker startup validates the live transport contract before claiming commands.
 
-Unpaired exact source operations retain the conservative remote privacy gate. Paired secure operations (`brain_vault_list`, `brain_vault_get`, `brain_vault_update`) can access the trusted Brain vault, including companion/private Markdown, while still blocking obvious credential/runtime files, path traversal, symlink escape, binary sources, and unsafe remote writes.
+Database changes follow an expand-first migration order so an older worker can continue operating while the database is upgraded.
 
-## Upstream contribution path
+## Tests
 
-Once the adapter stabilizes, the integration can be proposed upstream as a ChatGPT Web client/bridge, similar in spirit to Avenox Beyin's other client integrations.
+```sh
+npm test
+```
+
+The active suite includes:
+
+- CLI and worker syntax gates
+- worker process lifecycle
+- updater/rollback behavior
+- full-vault companion reads
+- credential/runtime path rejection
+- CAS and task safety
+- capability normalization
+- DB/worker version drift checks
+- fresh-install PostgreSQL schema smoke test
+
+GitHub CI must pass both the Node and PostgreSQL jobs.
+
+## ChatGPT setup
+
+Add `docs/CHATGPT-INSTRUCTIONS.md` to the private ChatGPT Project instructions and connect the user's Supabase project.
+
+The Project instruction is deliberately small. The current Bridge behavior is loaded dynamically from bootstrap through:
+
+- `bridge_skill`
+- `bridge_capabilities`
+- `core_skill`
+- `skills_manifest`
+
+## Relationship to Avenox Beyin
+
+This is a **community remote adapter**, not an Avenox core feature.
+
+Avenox core stays Python/local-first and does not manage this worker, Node, Supabase, or ChatGPT lifecycle. The Bridge consumes Avenox's existing public/local interfaces from outside the core.
+
+The adapter can evolve independently without expanding the upstream project's default remote trust boundary or maintenance responsibility.
 
 ## License
 
