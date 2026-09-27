@@ -416,7 +416,7 @@ def main(argv=None):
             if args.mode == "status":
                 if args.bridge_root is not None:
                     raise ValueError("chatgpt status reads only; use chatgpt on --bridge-root PATH")
-                result = chatgpt_status(state)
+                result = chatgpt_client().status(state)
             elif args.mode == "off":
                 if args.bridge_root is not None:
                     raise ValueError("--bridge-root works only with chatgpt on")
