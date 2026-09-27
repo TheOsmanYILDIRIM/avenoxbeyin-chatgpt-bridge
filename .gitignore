@@ -3,3 +3,4 @@ node_modules/
 config.local.json
 *.log
 .DS_Store
+.bridge-update.json
