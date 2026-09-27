@@ -89,6 +89,13 @@ export class Bridge {
     if (typeof contract.claim_rpc !== 'string' || typeof contract.finish_rpc !== 'string') {
       throw coded('transport_contract_invalid', 'Bridge transport RPC names are missing');
     }
+    if (
+      contract.secure_envelope_version !== 1 ||
+      contract.secure_cipher !== 'AES-256-GCM' ||
+      contract.secure_result_field !== 'result'
+    ) {
+      throw coded('transport_contract_invalid', 'Bridge secure transport contract is missing or incompatible');
+    }
     this._transportContract = contract;
     return contract;
   }
