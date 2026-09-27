@@ -48,6 +48,26 @@ The test suite covers the remote source privacy gate, CAS update behavior, struc
 - Supabase project
 - Supabase Auth user dedicated to the worker
 
+## Install and update
+
+For a managed local checkout, install once:
+
+```sh
+sh scripts/install.sh
+```
+
+The installer clones the Bridge to `~/.local/share/avenox-brain-bridge`, runs the tests, and creates an `avenox-bridge` command under `~/.local/bin`. It does not create or overwrite `config.local.json`.
+
+After that, updates follow the same small command shape as Avenox Beyin:
+
+```sh
+avenox-bridge update --check
+avenox-bridge update
+avenox-bridge rollback
+```
+
+The updater only accepts a clean Git checkout and a fast-forward from `origin/main`. It runs `npm test` after updating; if the tests fail, it automatically resets to the previous commit. `config.local.json` and `.env` are ignored by Git and remain untouched. A successful update returns `restart_required: true`; restart the existing worker process so it loads the new code.
+
 ## Quick start
 
 1. Apply `sql/schema.sql` to a Supabase project.
