@@ -93,13 +93,17 @@ export class Bridge {
     return contract;
   }
 
+  pairingRoot() {
+    return this.c.bridge_root || BRIDGE_ROOT;
+  }
+
   async doctor() {
     return {
       bridge_api_version: BRIDGE_API_VERSION,
       vault_root: this.c.vault_root,
       poll_interval_ms: this.c.poll_interval_ms,
       transport: await this.transportContract(),
-      secure_transport: await secureTransportStatus(BRIDGE_ROOT),
+      secure_transport: await secureTransportStatus(this.pairingRoot()),
       operations: await this.runtimeCapabilities()
     };
   }
@@ -279,7 +283,7 @@ export class Bridge {
         }
 
         secureContext = await decryptPairedCommand(
-          BRIDGE_ROOT,
+          this.pairingRoot(),
           cmd.operation,
           cmd.payload || {}
         );
@@ -561,7 +565,7 @@ export class Bridge {
       task,
       brain_version: version,
       bridge_api_version: BRIDGE_API_VERSION,
-      secure_transport: await secureTransportStatus(BRIDGE_ROOT),
+      secure_transport: await secureTransportStatus(this.pairingRoot()),
       bridge_skill: bridgeSkill,
       bridge_capabilities: await this.runtimeCapabilities(),
       core_skill: core,
