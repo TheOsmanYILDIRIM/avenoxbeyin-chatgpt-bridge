@@ -27,21 +27,20 @@ Use the normal queue/result flow.
 
 1. Insert one command into `public.brain_commands` with a unique idempotency key.
 2. Wait long enough for the worker polling interval.
-3. Read only that command's status and projected response from `public.brain_responses`.
+3. Read only that command's `status`, `claimed_at`, and projected response from `public.brain_responses`.
 4. If still pending/claimed/running, perform at most one additional result check unless the user explicitly asks to keep waiting.
 
-## Worker offline warning
+## Worker unavailable warning
 
-If the first result check is still `pending`, check the worker heartbeat before waiting again:
+Do not maintain an idle heartbeat. The queue itself is the liveness probe.
 
-```sql
-select private.brain_worker_status(20) as worker_status;
-```
-
-- If `online=false`, immediately tell the user: **"⚠️ Avenox worker çevrimdışı görünüyor. Termux'ta Bridge worker'ı aç."**
-- Do not create a replacement command. Keep the existing command ID pending so the worker can claim it after Termux starts.
-- If `online=true`, treat the worker as active and continue the normal one-extra-check flow.
-- `claimed` or `running` means the worker has already picked up the command; do not show the offline warning solely because execution is taking time.
+- Include `claimed_at` when reading the command status.
+- After the normal first wait, check the same command ID.
+- If it is still `pending`, wait once more and check the same command ID again.
+- If the second check is still `pending` and `claimed_at is null`, tell the user: **"⚠️ Avenox worker bu komutu alamıyor. Termux'taki Bridge worker kapalı veya bağlantısı kesilmiş olabilir."**
+- This is a liveness inference, not proof that Termux itself is closed.
+- Do not create a replacement command. Keep the existing command ID so the worker can claim it when it becomes available.
+- If status is `claimed` or `running`, the worker has already picked up the command; do not show the unavailable warning solely because execution is taking time.
 
 Do not use the removed experimental `brain_execute` procedure.
 
