@@ -6,3 +6,6 @@ config.local.json
 .bridge-update.json
 .bridge-worker.json\n.bridge-worker.log\n
 .bridge-pairings.json
+
+.bridge-command-log.jsonl
+.bridge-command-log.jsonl.1
