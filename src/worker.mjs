@@ -11,7 +11,7 @@ import { promisify } from 'node:util';
 import { CAPABILITIES, CAPABILITY_MAP, BRIDGE_API_VERSION } from './capabilities.mjs';
 
 const execFileAsync = promisify(execFile);
-const RECEIPT_HARNESSES = new Set(['codex','claude','antigravity','hermes','opencode','omp']);
+const RECEIPT_HARNESSES = new Set(['codex','claude','antigravity','hermes','opencode','omp','chatgpt']);
 const JEV_FEATURES = new Set(['context','review','answer','auto_context']);
 const REMOTE_PROTECTED_BASENAMES = new Set([
   'Core.md','Soul.md','Kurallar.md','Last-Session.md','Threads.md','Journal.md',
@@ -276,7 +276,7 @@ export class Bridge {
       }
 
       case 'brain_receipt': {
-        const harness = payload.harness || 'codex';
+        const harness = payload.harness || 'chatgpt';
         if (!RECEIPT_HARNESSES.has(harness)) throw new Error('invalid receipt harness');
         const body = {
           event_id: requiredString(payload.event_id, 'event_id'),
