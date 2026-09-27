@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { readFile, writeFile, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { DEFAULT_ROOT } from './updater.mjs';
+import { Bridge } from './worker.mjs';
 
 const STATE = '.bridge-worker.json';
 
@@ -38,6 +39,10 @@ export async function startWorker(root = DEFAULT_ROOT, { entry } = {}) {
   const current = await workerStatus(root);
   if (current.running) return { status:'already_running', ...current };
 
+  const configPath = process.env.AVENOX_BRIDGE_CONFIG || resolve(root, 'config.local.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  const transport = await new Bridge(config).transportContract();
+
   const cli = entry || resolve(root, 'src/cli.mjs');
   const child = spawn(process.execPath, [cli, 'run'], {
     cwd: root,
@@ -56,7 +61,7 @@ export async function startWorker(root = DEFAULT_ROOT, { entry } = {}) {
     await rm(resolve(root, STATE), { force:true });
     throw new Error('Bridge worker exited during startup.');
   }
-  return { status:'started', running:true, ...state };
+  return { status:'started', running:true, transport, ...state };
 }
 
 export async function stopWorker(root = DEFAULT_ROOT) {
