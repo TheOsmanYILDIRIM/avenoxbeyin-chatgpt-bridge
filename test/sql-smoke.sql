@@ -34,8 +34,8 @@ begin
   from private.bridge_transport_meta
   where singleton=true;
 
-  if v <> 9 then
-    raise exception 'expected transport schema 9, got %', v;
+  if v <> 10 then
+    raise exception 'expected transport schema 10, got %', v;
   end if;
 
   if to_regprocedure('public.bridge_transport_contract()') is null then
@@ -50,4 +50,12 @@ begin
     raise exception 'missing finish_brain_command_v2(jsonb)';
   end if;
 end
-$$;
+$;
+
+insert into public.brain_commands(operation,payload,requested_by)
+values
+  ('brain_vault_list','{}'::jsonb,'sql-smoke'),
+  ('brain_vault_get','{}'::jsonb,'sql-smoke'),
+  ('brain_vault_update','{}'::jsonb,'sql-smoke');
+
+delete from public.brain_commands where requested_by='sql-smoke';
