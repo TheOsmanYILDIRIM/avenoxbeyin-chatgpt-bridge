@@ -64,6 +64,16 @@ class ChatGPTBridgeToggleTest(unittest.TestCase):
         self.assertEqual(saved["mode"], "off")
         self.assertEqual(Path(saved["bridge_root"]), self.bridge.resolve())
 
+    def test_saved_off_status_does_not_launch_node(self):
+        self.state.mkdir()
+        (self.state / "chatgpt.json").write_text(
+            json.dumps({"mode": "off", "bridge_root": str(self.bridge.resolve())}), encoding="utf-8")
+        with patch.object(self.m, "_call", side_effect=AssertionError("off must stay inert")):
+            result = self.m.status(self.state)
+        self.assertEqual(result["mode"], "off")
+        self.assertTrue(result["configured"])
+        self.assertFalse(result["running"])
+
     def test_config_is_fail_closed_and_never_accepts_secret_fields(self):
         self.state.mkdir()
         (self.state / "chatgpt.json").write_text(
