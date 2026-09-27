@@ -27,6 +27,9 @@ The worker discovers and publishes a live capability catalog at bootstrap. ChatG
 Full Brain continuity is available through:
 
 - `brain_vault_list`
+- `brain_vault_find`
+- `brain_vault_search`
+- `brain_vault_read_range`
 - `brain_vault_get`
 - `brain_vault_update`
 
@@ -52,6 +55,16 @@ The Bridge keeps:
 - no arbitrary shell execution
 
 Generic `brain_source_*` operations retain their conservative source/privacy behavior. Trusted continuity access uses the explicit `brain_vault_*` capabilities.
+
+### Safe vault discovery
+
+The Bridge provides shell-free file discovery/read primitives:
+
+- `brain_vault_find`: case-insensitive path/name substring search.
+- `brain_vault_search`: literal text search across allowed text files with bounded results.
+- `brain_vault_read_range`: exact 1-based line range read with whole-file SHA-256.
+
+They preserve vault-root containment, credential/runtime deny rules, symlink rejection, file-size limits and bounded result counts. They never execute local commands.
 
 ## Capabilities
 
