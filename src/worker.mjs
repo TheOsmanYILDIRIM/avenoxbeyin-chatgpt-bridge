@@ -175,7 +175,12 @@ export class Bridge {
       });
     }
     try {
-      const result = await this.execute(cmd.operation, cmd.payload || {});
+      const timeoutMs = Number(this.c.operation_timeout_ms || 15000);
+      const result = await withTimeout(
+        this.execute(cmd.operation, cmd.payload || {}),
+        timeoutMs,
+        cmd.operation
+      );
       const projection = this.project(cmd.operation, result);
       await this.finish(cmd, 'completed', result, null, projection);
     } catch (e) {
@@ -691,6 +696,17 @@ function coded(code, message) {
   const e = new Error(message);
   e.code = code;
   return e;
+}
+function withTimeout(promise, ms, operation) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        reject(coded('operation_timeout', `${operation} exceeded ${ms}ms`));
+      }, ms);
+    })
+  ]).finally(() => clearTimeout(timer));
 }
 function sha(value) {
   return createHash('sha256').update(value).digest('hex');
