@@ -42,9 +42,9 @@ export const CAPABILITIES = [
   {
     name: 'brain_vault_list',
     mode: 'read',
-    description: 'List the paired client view of the Brain vault. Requires secure paired transport.',
-    maps_to: 'paired AES-256-GCM vault list',
-    secure_transport_required: true,
+    description: 'List the trusted remote view of the Brain vault through the normal authenticated Supabase queue.',
+    maps_to: 'trusted vault list',
+    transport: 'trusted_supabase_queue',
     payload_schema: { type:'object', properties:{
       path:{type:'string'}, recursive:{type:'boolean'}, max_entries:{type:'integer'}
     }, additionalProperties:false }
@@ -52,9 +52,9 @@ export const CAPABILITIES = [
   {
     name: 'brain_vault_get',
     mode: 'read',
-    description: 'Read one exact text file anywhere in the Brain vault, including companion/private Markdown, over paired encrypted transport.',
-    maps_to: 'paired AES-256-GCM exact vault read',
-    secure_transport_required: true,
+    description: 'Read one exact text file in the Brain vault, including companion/private Markdown, through the trusted Supabase queue.',
+    maps_to: 'trusted exact vault read',
+    transport: 'trusted_supabase_queue',
     payload_schema: { type:'object', required:['source'], properties:{
       source:{type:'string'}
     }, additionalProperties:false }
@@ -62,24 +62,11 @@ export const CAPABILITIES = [
   {
     name: 'brain_vault_update',
     mode: 'write',
-    description: 'CAS-update an allowed text content file in the Brain vault over paired encrypted transport. Task files still require task-update.',
-    maps_to: 'paired AES-256-GCM CAS vault update + beyin.py sync',
-    secure_transport_required: true,
+    description: 'CAS-update an allowed text content file in the Brain vault through the trusted Supabase queue. Task files still require task-update.',
+    maps_to: 'trusted CAS vault update + beyin.py sync',
+    transport: 'trusted_supabase_queue',
     payload_schema: { type:'object', required:['source','expected_sha256','content'], properties:{
       source:{type:'string'}, expected_sha256:{type:'string'}, content:{type:'string'}
-    }, additionalProperties:false }
-  },
-  {
-    name: 'brain_shell_exec',
-    mode: 'write',
-    description: 'Execute one local owner-approved command when shell mode is enabled locally. Uses argv execution rather than shell string evaluation.',
-    maps_to: 'local execFile command adapter',
-    user_intent_required: true,
-    payload_schema: { type:'object', required:['command'], properties:{
-      command:{type:'string'},
-      args:{type:'array',items:{type:'string'}},
-      cwd:{type:'string'},
-      timeout_ms:{type:'integer'}
     }, additionalProperties:false }
   },
   {
