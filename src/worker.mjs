@@ -159,7 +159,22 @@ export class Bridge {
 
     this._runtimeCapabilities = CAPABILITIES.map(cap => {
       const cliName = needsCli.get(cap.name);
-      return { ...cap, available: cliName ? cli.has(cliName) : true };
+      const live = { ...cap, available: cliName ? cli.has(cliName) : true };
+      if (['brain_vault_list','brain_vault_get','brain_vault_update'].includes(cap.name)) {
+        delete live.secure_transport_required;
+        live.transport = 'trusted_supabase_queue';
+        if (cap.name === 'brain_vault_list') {
+          live.description = 'List the trusted remote view of the Brain vault through the normal authenticated Supabase queue.';
+          live.maps_to = 'trusted vault list';
+        } else if (cap.name === 'brain_vault_get') {
+          live.description = 'Read one exact text file in the Brain vault, including companion/private Markdown, through the trusted Supabase queue.';
+          live.maps_to = 'trusted exact vault read';
+        } else {
+          live.description = 'CAS-update an allowed text content file in the Brain vault through the trusted Supabase queue. Task files still require task-update.';
+          live.maps_to = 'trusted CAS vault update + beyin.py sync';
+        }
+      }
+      return live;
     });
     return this._runtimeCapabilities;
   }
