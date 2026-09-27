@@ -123,20 +123,25 @@ def status(state):
     config = _read(state)
     mode = config.get("mode", DEFAULT_MODE)
     root = _bridge_root(config)
-    if not config and root is None:
-        return {"mode": "off", "configured": False, "available": False, "running": False}
+
+    # Match Jev's default-off contract: a never-enabled or saved-off integration
+    # does not launch Node just because doctor/status was requested.
+    if mode == "off":
+        return {"mode": "off", "configured": bool(config.get("bridge_root")),
+                "available": root is not None, "running": False}
+
     if root is None:
-        return {"mode": mode, "configured": bool(config.get("bridge_root")),
+        return {"mode": "on", "configured": bool(config.get("bridge_root")),
                 "available": False, "running": False, "error": "bridge_not_found"}
     try:
         worker = _call(root, "status")
         running = worker.get("running") is True
-        result = {"mode": mode, "configured": True, "available": True, "running": running}
+        result = {"mode": "on", "configured": True, "available": True, "running": running}
         if isinstance(worker.get("pid"), int):
             result["pid"] = worker["pid"]
         return result
     except ValueError as exc:
-        return {"mode": mode, "configured": True, "available": False,
+        return {"mode": "on", "configured": True, "available": False,
                 "running": False, "error": str(exc)}
 
 
@@ -154,9 +159,9 @@ def set_mode(state, mode, bridge_root=None):
                 "running": True, **({"pid": worker["pid"]} if isinstance(worker.get("pid"), int) else {})}
 
     root = _bridge_root(config)
-    if config.get("mode") == "on" and root is None:
-        raise ValueError("chatgpt_bridge_unavailable")
-    if root is not None:
+    if config.get("mode") == "on":
+        if root is None:
+            raise ValueError("chatgpt_bridge_unavailable")
         _call(root, "stop")
     saved = {"mode": "off"}
     if root is not None:
