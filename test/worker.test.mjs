@@ -100,10 +100,10 @@ console.log(JSON.stringify({status:'ok'}));
 
 test('receipt defaults to chatgpt attribution in coordinated upstream mode', async t => {
   const script = String.raw`
-const fs = await import('node:fs/promises');
+const fs = require('node:fs');
 const fileIndex = process.argv.indexOf('--file');
 const harnessIndex = process.argv.indexOf('--harness');
-const body = JSON.parse(await fs.readFile(process.argv[fileIndex + 1], 'utf8'));
+const body = JSON.parse(fs.readFileSync(process.argv[fileIndex + 1], 'utf8'));
 console.log(JSON.stringify({status:'ok', harness:process.argv[harnessIndex + 1], body}));
 `;
   const { bridge } = await fixture(t, script);
