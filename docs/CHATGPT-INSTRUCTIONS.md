@@ -30,6 +30,19 @@ Use the normal queue/result flow.
 3. Read only that command's status and projected response from `public.brain_responses`.
 4. If still pending/claimed/running, perform at most one additional result check unless the user explicitly asks to keep waiting.
 
+## Worker offline warning
+
+If the first result check is still `pending`, check the worker heartbeat before waiting again:
+
+```sql
+select private.brain_worker_status(20) as worker_status;
+```
+
+- If `online=false`, immediately tell the user: **"⚠️ Avenox worker çevrimdışı görünüyor. Termux'ta Bridge worker'ı aç."**
+- Do not create a replacement command. Keep the existing command ID pending so the worker can claim it after Termux starts.
+- If `online=true`, treat the worker as active and continue the normal one-extra-check flow.
+- `claimed` or `running` means the worker has already picked up the command; do not show the offline warning solely because execution is taking time.
+
 Do not use the removed experimental `brain_execute` procedure.
 
 Do not scan the whole response table or read unrelated command rows.
