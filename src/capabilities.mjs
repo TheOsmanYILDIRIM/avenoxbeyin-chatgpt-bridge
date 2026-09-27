@@ -73,7 +73,7 @@ export const CAPABILITIES = [
     maps_to: 'beyin.py receipt --file --harness',
     payload_schema: { type:'object', required:['event_id','summary','refs'], properties:{
       event_id:{type:'string'}, summary:{type:'string'}, refs:{type:'array',items:{type:'string'}},
-      session:{type:'string'}, harness:{enum:['codex','claude','antigravity','hermes','opencode','omp']}
+      session:{type:'string'}, harness:{enum:['codex','claude','antigravity','hermes','opencode','omp','chatgpt']}
     }, additionalProperties:false }
   },
   {
