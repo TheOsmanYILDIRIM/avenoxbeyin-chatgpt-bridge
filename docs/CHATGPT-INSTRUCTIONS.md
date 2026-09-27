@@ -66,6 +66,7 @@ Examples include context/source reads, note/task/receipt mutations, sync/history
 - `brain_source_update` requires the previously read SHA-256 and must fail on hash conflict.
 - Update/rollback/recover and Jev mode changes require explicit user intent.
 - Exact source reads return canonical Markdown content; do not summarize it before using it as source.
+- Exact remote source access rejects Companion/identity files and sources marked `visibility: private`, `remote_allowed: false`, or sensitive. Do not work around this with guessed paths.
 - Current project source code belongs in GitHub; Brain is for memory/context/decisions.
 
 ## Source priority
