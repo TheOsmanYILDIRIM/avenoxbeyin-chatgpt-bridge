@@ -26,6 +26,7 @@ ChatGPT Web
 - dynamically expose current Avenox skills to ChatGPT
 - keep project source code in GitHub, not in Brain
 - use Drive only as an optional readable fallback
+- expose a worker heartbeat so ChatGPT can warn when the local Termux worker is offline
 
 ## Transport\n\nThe default transport is the normal queue/result flow: ChatGPT enqueues a command, the authenticated worker executes it locally, then ChatGPT reads that command's projected response. An experimental long-running SQL fast path was removed because some ChatGPT/Supabase security layers reject it.\n\n## Operations
 
