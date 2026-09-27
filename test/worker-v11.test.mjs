@@ -89,6 +89,68 @@ test('trusted vault update keeps CAS, sync rollback boundary and task revision r
   );
 });
 
+test('vault find discovers files by path substring without exposing denied paths', async t => {
+  const { vault, bridge } = await fixture(t);
+  await mkdir(join(vault, '10-Projects'), { recursive:true });
+  await writeFile(join(vault, '10-Projects', 'StudyTracker.md'), '# Study');
+  await writeFile(join(vault, '10-Projects', 'other.md'), '# Other');
+  await writeFile(join(vault, '.env'), 'STUDYTRACKER_SECRET=1');
+
+  const result = await bridge.vaultFind({ query:'studytracker', path:'.' });
+  assert.deepEqual(result.matches.map(x => x.source), ['10-Projects/StudyTracker.md']);
+});
+
+test('vault search is literal, bounded and skips denied or binary files', async t => {
+  const { vault, bridge } = await fixture(t);
+  await mkdir(join(vault, 'notes'), { recursive:true });
+  await writeFile(join(vault, 'notes', 'a.md'), 'alpha\nNeedle value\nneedle again\nomega\n');
+  await writeFile(join(vault, 'notes', 'b.md'), 'regex .* is literal here\n');
+  await writeFile(join(vault, '.env'), 'needle=secret\n');
+  await writeFile(join(vault, 'notes', 'binary.dat'), Buffer.from([0,1,2,3]));
+
+  const insensitive = await bridge.vaultSearch({
+    query:'needle',
+    path:'notes',
+    max_results:10,
+    max_matches_per_file:10
+  });
+  assert.deepEqual(insensitive.matches.map(x => [x.source,x.line]), [
+    ['notes/a.md',2],
+    ['notes/a.md',3]
+  ]);
+
+  const literal = await bridge.vaultSearch({
+    query:'.*',
+    path:'notes',
+    case_sensitive:true,
+    extensions:['.md']
+  });
+  assert.equal(literal.matches.length, 1);
+  assert.equal(literal.matches[0].source, 'notes/b.md');
+});
+
+test('vault ranged read returns exact bounded lines and whole-file sha', async t => {
+  const { vault, bridge } = await fixture(t);
+  const body = 'one\ntwo\nthree\nfour\nfive';
+  await writeFile(join(vault, 'sample.md'), body);
+
+  const result = await bridge.vaultReadRange({
+    source:'sample.md',
+    start_line:2,
+    end_line:4
+  });
+  assert.equal(result.content, 'two\nthree\nfour');
+  assert.equal(result.total_lines, 5);
+  assert.equal(result.start_line, 2);
+  assert.equal(result.end_line, 4);
+  assert.equal(result.sha256, sha(body));
+
+  await assert.rejects(
+    () => bridge.vaultReadRange({ source:'sample.md', start_line:1, end_line:501 }),
+    /exceeds 500 lines/
+  );
+});
+
 test('transport contract requires schema v11 trusted vault transport', async t => {
   const { bridge } = await fixture(t);
   bridge.rpc = async name => {
@@ -169,7 +231,10 @@ process.exit(2);
 `);
   const caps = await bridge.runtimeCapabilities();
   const byName = new Map(caps.map(x => [x.name, x]));
-  for (const name of ['brain_vault_list','brain_vault_get','brain_vault_update']) {
+  for (const name of [
+    'brain_vault_list','brain_vault_find','brain_vault_search','brain_vault_read_range',
+    'brain_vault_get','brain_vault_update'
+  ]) {
     const cap = byName.get(name);
     assert.equal(cap.available, true);
     assert.equal(cap.transport, 'trusted_supabase_queue');
