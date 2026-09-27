@@ -163,7 +163,8 @@ export class Bridge {
   async run() {
     for (;;) {
       try {
-        const cmd = await this.rpc('claim_next_brain_command');
+        const claimed = await this.rpc('claim_next_brain_command');
+        const cmd = Array.isArray(claimed) ? claimed[0] : claimed;
         if (cmd) await this.handle(cmd);
       } catch (e) {
         console.error('[bridge]', e.message);
