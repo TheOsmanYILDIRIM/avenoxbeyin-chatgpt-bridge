@@ -43,6 +43,7 @@ create table if not exists private.bridge_workers (
   user_id uuid primary key,
   worker_name text unique not null,
   enabled boolean not null default true,
+  last_seen_at timestamptz,
   created_at timestamptz not null default now()
 );
 
@@ -52,42 +53,46 @@ revoke all on public.brain_commands from anon, authenticated;
 revoke all on public.brain_responses from anon, authenticated;
 
 create or replace function public.claim_next_brain_command()
-returns public.brain_commands
+returns setof public.brain_commands
 language plpgsql
 security definer
 set search_path=''
-as $$
+as $
 declare
   v_uid uuid := auth.uid();
-  v_row public.brain_commands;
+  v_worker text;
 begin
-  if not exists (
-    select 1 from private.bridge_workers w
-    where w.user_id=v_uid and w.enabled
-  ) then
+  select w.worker_name into v_worker
+  from private.bridge_workers w
+  where w.user_id=v_uid and w.enabled;
+
+  if v_worker is null then
     raise exception 'unauthorized worker';
   end if;
 
-  select * into v_row
-  from public.brain_commands
-  where status='pending'
-  order by created_at
-  for update skip locked
-  limit 1;
+  update private.bridge_workers
+  set last_seen_at=now()
+  where user_id=v_uid and enabled;
 
-  if v_row.id is null then return null; end if;
-
-  update public.brain_commands
+  return query
+  with candidate as (
+    select c.id
+    from public.brain_commands c
+    where c.status='pending'
+    order by c.created_at asc
+    for update skip locked
+    limit 1
+  )
+  update public.brain_commands c
   set status='claimed',
       worker_id=v_uid::text,
       claimed_at=now(),
       updated_at=now()
-  where id=v_row.id
-  returning * into v_row;
-
-  return v_row;
+  from candidate
+  where c.id=candidate.id
+  returning c.*;
 end;
-$$;
+$;
 
 create or replace function public.finish_brain_command(
   p_id uuid,
@@ -157,6 +162,51 @@ revoke all on function public.finish_brain_command(uuid,text,jsonb,jsonb,text,te
 grant execute on function public.claim_next_brain_command() to authenticated;
 grant execute on function public.finish_brain_command(uuid,text,jsonb,jsonb,text,text[],text)
   to authenticated;
+
+
+create or replace function private.brain_worker_status(
+  p_stale_after_seconds integer default 20
+)
+returns jsonb
+language sql
+security invoker
+set search_path=''
+as $
+  select coalesce(
+    (
+      select jsonb_strip_nulls(jsonb_build_object(
+        'worker_name', w.worker_name,
+        'enabled', w.enabled,
+        'last_seen_at', w.last_seen_at,
+        'heartbeat_age_seconds',
+          case
+            when w.last_seen_at is null then null
+            else greatest(0, floor(extract(epoch from (clock_timestamp() - w.last_seen_at))))::bigint
+          end,
+        'stale_after_seconds', greatest(coalesce(p_stale_after_seconds, 20), 5),
+        'online',
+          coalesce(
+            w.last_seen_at >= clock_timestamp() - make_interval(
+              secs => greatest(coalesce(p_stale_after_seconds, 20), 5)
+            ),
+            false
+          )
+      ))
+      from private.bridge_workers w
+      where w.enabled
+      order by w.last_seen_at desc nulls last, w.created_at desc
+      limit 1
+    ),
+    jsonb_build_object(
+      'online', false,
+      'reason', 'no_enabled_worker',
+      'stale_after_seconds', greatest(coalesce(p_stale_after_seconds, 20), 5)
+    )
+  );
+$;
+
+revoke all on function private.brain_worker_status(integer)
+  from public,anon,authenticated;
 
 create or replace function private.brain_capabilities()
 returns jsonb
