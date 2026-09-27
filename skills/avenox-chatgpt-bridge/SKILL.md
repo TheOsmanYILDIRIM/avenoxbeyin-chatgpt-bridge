@@ -47,6 +47,56 @@ Bridge'in mevcut komut kuyruğunu kullan.
 - `completed`, `failed` veya `conflict` terminal sonuçlarını esas al.
 - Stale/crash recovery Bridge/worker sorumluluğudur; istemci stale command'i körlemesine tekrar çalıştırmaz.
 
+## Secure paired full-vault transport
+
+Bazı capability kayıtlarında `secure_transport_required: true` bulunur. Bu operasyonlar plaintext payload ile gönderilmez.
+
+Pairing yerel olarak `avenox-bridge pair` ile oluşturulur. Komut tek seferlik bir `AVX3.<pair_id>.<secret>` token döndürür. Bu token sırdır:
+
+- Supabase'e yazma.
+- Normal sohbet yanıtında tekrar gösterme.
+- Yalnız intended private ChatGPT Project içinde sakla.
+- Pairing gerekmezse `avenox-bridge pair --revoke PAIR_ID` ile iptal et.
+
+Secure command envelope:
+
+```json
+{
+  "v": 1,
+  "pair_id": "<uuid>",
+  "purpose": "command",
+  "operation": "brain_vault_get",
+  "issued_at": 0,
+  "expires_at": 0,
+  "nonce": "<base64url 12 bytes>",
+  "ciphertext": "<base64url>",
+  "tag": "<base64url 16 bytes>"
+}
+```
+
+Kriptografik sözleşme:
+
+- Secret: pairing token içindeki 32 byte secret.
+- Key derivation: HKDF-SHA256, salt=`avenox-bridge-v3`, info=`secure-vault-envelope`, length=32.
+- Cipher: AES-256-GCM.
+- Nonce: her command için benzersiz 12 byte.
+- Command TTL: en fazla 10 dakika; varsayılan 5 dakika kullan.
+- AAD: `AVX3|v|pair_id|purpose|operation|issued_at|expires_at|nonce`.
+- Aynı nonce ikinci kez kullanılırsa worker `secure_replay_rejected` döndürür.
+- `operation` envelope AAD'sine bağlıdır; operation değiştirmek authentication'ı bozar.
+
+`payload_schema`, şifrelenmeden önceki gerçek inner payload'ı tanımlar. Queue'ya yazılan `payload` ise yukarıdaki secure envelope'dur.
+
+Secure operasyonların sonucu plaintext `brain_responses` içine yazılmaz. Şifreli envelope `brain_commands.result` alanında bulunur ve `purpose: "result"` ile aynı pairing token kullanılarak çözülür. Result envelope'da `expires_at` null'dır.
+
+Bootstrap içindeki `secure_transport` alanı aktif pairing ID'lerini ve cipher sürümünü gösterir; hiçbir zaman secret döndürmez.
+
+### Full vault sınırı
+
+Paired secure vault erişimi Brain vault içindeki normal metin içeriğini kapsar; companion/private Markdown da buna dahildir. Ancak transport secret'ları ve bariz credential/runtime dosyaları yine uzaktan okunmaz. Path traversal ve symlink escape yasaktır.
+
+`brain_vault_update` CAS/SHA-256 korumasını kullanır ve yalnız güvenli içerik uzantılarını yazar. Task kaynakları revision semantiğini korumak için hâlâ `brain_task_update` ile güncellenir.
+
 ## Exact source ve task güvenliği
 
 Exact Markdown gerektiğinde capability kataloğundaki source operasyonlarını kullan.
@@ -85,5 +135,6 @@ Her yeni konuşmada bootstrap'tan:
 - `bridge_capabilities`
 - `core_skill`
 - `skills_manifest`
+- `secure_transport`
 
 alanlarını al ve güncel sözleşme olarak uygula.
