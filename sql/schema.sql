@@ -203,7 +203,7 @@ create table if not exists private.bridge_transport_meta (
 );
 
 insert into private.bridge_transport_meta(singleton,schema_version)
-values (true, 10)
+values (true, 11)
 on conflict (singleton) do update
 set schema_version=excluded.schema_version,
     updated_at=now();
@@ -234,9 +234,7 @@ begin
     'claim_rpc', 'claim_next_brain_command_v2',
     'finish_rpc', 'finish_brain_command_v2',
     'command_terminal_statuses', jsonb_build_array('completed','failed','conflict'),
-    'secure_envelope_version', 1,
-    'secure_cipher', 'AES-256-GCM',
-    'secure_result_field', 'result'
+    'vault_transport', 'trusted_supabase_queue'
   );
 end;
 $$;
