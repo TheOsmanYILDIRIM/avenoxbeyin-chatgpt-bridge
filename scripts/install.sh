@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/sh
+#!/usr/bin/env sh
 set -eu
 
 REPO="https://github.com/TheOsmanYILDIRIM/avenoxbeyin-chatgpt-bridge.git"
