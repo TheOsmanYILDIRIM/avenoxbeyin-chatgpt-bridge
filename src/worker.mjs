@@ -10,11 +10,15 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { CAPABILITIES, CAPABILITY_MAP, BRIDGE_API_VERSION } from './capabilities.mjs';
+import {
+  decryptPairedCommand, encryptPairedResult, secureTransportStatus
+} from './secure.mjs';
 
 const execFileAsync = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
-const BRIDGE_SKILL_PATH = resolve(HERE, '..', 'skills', 'avenox-chatgpt-bridge', 'SKILL.md');
-export const REQUIRED_TRANSPORT_SCHEMA = 9;
+const BRIDGE_ROOT = resolve(HERE, '..');
+const BRIDGE_SKILL_PATH = resolve(BRIDGE_ROOT, 'skills', 'avenox-chatgpt-bridge', 'SKILL.md');
+export const REQUIRED_TRANSPORT_SCHEMA = 10;
 const RECEIPT_HARNESSES = new Set(['codex','claude','antigravity','hermes','opencode','omp']);
 const JEV_FEATURES = new Set(['context','review','answer','auto_context']);
 const REMOTE_PROTECTED_BASENAMES = new Set([
@@ -95,6 +99,7 @@ export class Bridge {
       vault_root: this.c.vault_root,
       poll_interval_ms: this.c.poll_interval_ms,
       transport: await this.transportContract(),
+      secure_transport: await secureTransportStatus(BRIDGE_ROOT),
       operations: await this.runtimeCapabilities()
     };
   }
@@ -204,6 +209,9 @@ export class Bridge {
   }
 
   async handle(cmd) {
+    if (CAPABILITY_MAP.get(cmd.operation)?.secure_transport_required === true) {
+      return this.handleSecure(cmd);
+    }
     const timeoutMs = Number(this.c.operation_timeout_ms || 15000);
     let outcome;
     try {
@@ -245,6 +253,65 @@ export class Bridge {
         terminal_status: e.code === 'conflict' ? 'conflict' : 'failed',
         result: null,
         error,
+        projection: {}
+      };
+    }
+
+    await this.finish(
+      cmd,
+      outcome.terminal_status,
+      outcome.result,
+      outcome.error,
+      outcome.projection
+    );
+  }
+
+  async handleSecure(cmd) {
+    const timeoutMs = Number(this.c.operation_timeout_ms || 15000);
+    let secureContext = null;
+    let outcome;
+    try {
+      outcome = await withTimeout((async () => {
+        const supported = await this.supportedCapabilityMap();
+        const capability = supported.get(cmd.operation);
+        if (!capability || capability.secure_transport_required !== true) {
+          throw coded('invalid_operation', 'secure operation is not available');
+        }
+
+        secureContext = await decryptPairedCommand(
+          BRIDGE_ROOT,
+          cmd.operation,
+          cmd.payload || {}
+        );
+
+        const result = await this.execute(cmd.operation, secureContext.payload || {});
+        const projection = this.project(cmd.operation, result);
+        return {
+          terminal_status: 'completed',
+          result: encryptPairedResult(secureContext, cmd.operation, {
+            ok: true,
+            result,
+            projection
+          }),
+          error: null,
+          projection: {}
+        };
+      })(), timeoutMs, cmd.operation);
+    } catch (e) {
+      const detail = {
+        error: e.code || 'operation_failed',
+        message: e.message
+      };
+      if (e.brain_error) detail.brain_error = e.brain_error;
+
+      const encrypted = secureContext
+        ? encryptPairedResult(secureContext, cmd.operation, { ok:false, error:detail })
+        : null;
+
+      outcome = {
+        terminal_status: e.code === 'conflict' ? 'conflict' : 'failed',
+        result: encrypted,
+        error: secureContext ? { error:'secure_operation_failed' } : detail,
         projection: {}
       };
     }
@@ -332,6 +399,15 @@ export class Bridge {
 
       case 'brain_source_update':
         return this.sourceUpdate(payload);
+
+      case 'brain_vault_list':
+        return this.vaultList(payload);
+
+      case 'brain_vault_get':
+        return this.vaultGet(payload.source);
+
+      case 'brain_vault_update':
+        return this.vaultUpdate(payload);
 
       case 'brain_note_create':
         return this.withTempJson(validateCreatePayload(payload), p => this.runBeyin('note-create', ['--file', p]));
@@ -485,6 +561,7 @@ export class Bridge {
       task,
       brain_version: version,
       bridge_api_version: BRIDGE_API_VERSION,
+      secure_transport: await secureTransportStatus(BRIDGE_ROOT),
       bridge_skill: bridgeSkill,
       bridge_capabilities: await this.runtimeCapabilities(),
       core_skill: core,
@@ -572,6 +649,133 @@ export class Bridge {
     }
   }
 
+  async safeVaultPath(source) {
+    if (
+      typeof source !== 'string' || !source || source.includes('\0') ||
+      isAbsolute(source) || source.split(/[\\/]/).includes('..')
+    ) throw new Error('invalid vault source');
+
+    const root = await realpath(this.c.vault_root);
+    const real = await realpath(resolve(root, source));
+    if (!(real === root || real.startsWith(root + sep))) {
+      throw new Error('vault source escapes root');
+    }
+    const rel = relative(root, real).split(sep).join('/');
+    assertPairedVaultReadable(rel);
+    return { root, real, rel };
+  }
+
+  async vaultList(payload = {}) {
+    const recursive = payload.recursive !== false;
+    const maxEntries = payload.max_entries == null
+      ? 500
+      : intInRange(payload.max_entries, 1, 2000, 'max_entries');
+
+    const root = await realpath(this.c.vault_root);
+    let start = root;
+    if (payload.path != null && payload.path !== '') {
+      const requested = requiredString(payload.path, 'path');
+      if (isAbsolute(requested) || requested.split(/[\\/]/).includes('..')) {
+        throw new Error('invalid vault path');
+      }
+      start = await realpath(resolve(root, requested));
+      if (!(start === root || start.startsWith(root + sep))) {
+        throw new Error('vault path escapes root');
+      }
+    }
+
+    const out = [];
+    const visit = async path => {
+      if (out.length >= maxEntries) return;
+      const s = await stat(path);
+      const rel = relative(root, path).split(sep).join('/');
+      if (rel && vaultPathBlockReason(rel)) return;
+
+      if (s.isFile()) {
+        out.push({
+          source: rel,
+          size_bytes: s.size,
+          writable: pairedVaultWritable(rel)
+        });
+        return;
+      }
+      if (!s.isDirectory()) return;
+
+      for (const entry of await readdir(path, { withFileTypes:true })) {
+        if (out.length >= maxEntries) break;
+        if (entry.isSymbolicLink()) continue;
+        const child = resolve(path, entry.name);
+        if (!recursive && path !== start) continue;
+        if (!recursive && entry.isDirectory()) continue;
+        await visit(child);
+      }
+    };
+
+    await visit(start);
+    return {
+      path: relative(root, start).split(sep).join('/') || '.',
+      recursive,
+      truncated: out.length >= maxEntries,
+      entries: out
+    };
+  }
+
+  async vaultGet(source) {
+    const { real, rel } = await this.safeVaultPath(requiredString(source, 'source'));
+    const s = await stat(real);
+    if (!s.isFile()) throw new Error('vault source is not a file');
+    if (s.size > (this.c.max_vault_file_bytes || 1048576)) throw new Error('vault source too large');
+    const content = await readFile(real);
+    if (content.includes(0)) throw coded('binary_source_rejected', 'binary vault source is not supported');
+    return {
+      source: rel,
+      size_bytes: s.size,
+      sha256: sha(content),
+      content: content.toString('utf8'),
+      writable: pairedVaultWritable(rel)
+    };
+  }
+
+  async vaultUpdate(payload) {
+    const source = requiredString(payload.source, 'source');
+    const expected = requiredSha(payload.expected_sha256);
+    const content = requiredStringAllowEmpty(payload.content, 'content');
+    const { real, rel } = await this.safeVaultPath(source);
+    if (!pairedVaultWritable(rel)) {
+      throw coded('vault_write_denied', 'vault source is read-only over remote paired transport');
+    }
+
+    const current = await readFile(real, 'utf8');
+    if (sha(current) !== expected) throw coded('conflict', 'source hash changed');
+    if (/(^|\/)tasks\//i.test(rel) || /^---[\s\S]{0,4096}?^kind:\s*task\s*$/mi.test(current)) {
+      throw new Error('task sources must use brain_task_update');
+    }
+
+    const s = await stat(real);
+    const temp = resolve(dirname(real), `.avenox-vault-${process.pid}-${Date.now()}.tmp`);
+    await writeFile(temp, content, { encoding:'utf8' });
+    await chmod(temp, s.mode);
+    await rename(temp, real);
+
+    try {
+      const sync = await this.runBeyin('sync');
+      return {
+        source: rel,
+        previous_sha256: expected,
+        sha256: sha(content),
+        size_bytes: Buffer.byteLength(content, 'utf8'),
+        sync
+      };
+    } catch (e) {
+      const restore = resolve(dirname(real), `.avenox-vault-restore-${process.pid}-${Date.now()}.tmp`);
+      await writeFile(restore, current, { encoding:'utf8' });
+      await chmod(restore, s.mode);
+      await rename(restore, real);
+      try { await this.runBeyin('sync'); } catch {}
+      throw e;
+    }
+  }
+
   project(op, result) {
     if (op === 'brain_context') {
       return {
@@ -584,7 +788,12 @@ export class Bridge {
     }
 
     if (op === 'avenox_skill_get') return { kind:'skill', refs:[result.source], text:result.content };
-    if (op === 'brain_source_get') return { kind:'source', refs:[result.source], text:result.content };
+    if (op === 'brain_source_get' || op === 'brain_vault_get') {
+      return { kind:'source', refs:[result.source], text:result.content };
+    }
+    if (op === 'brain_vault_list') {
+      return { kind:'source', refs:[], text:JSON.stringify(result, null, 2) };
+    }
 
     if (op === 'avenox_bootstrap') {
       return {
@@ -626,6 +835,40 @@ function extractRefs(value) {
   };
   walk(value);
   return [...refs];
+}
+
+const VAULT_DENIED_DIRS = new Set(['.git','node_modules','__pycache__','.venv','venv']);
+const VAULT_DENIED_BASENAMES = new Set([
+  '.env','.env.local','.env.production','.npmrc','.netrc',
+  'config.local.json','credentials','credentials.json','service-account.json',
+  'id_rsa','id_ed25519'
+]);
+const VAULT_DENIED_EXTENSIONS = new Set(['.pem','.key','.p12','.pfx','.sqlite','.sqlite3','.db']);
+const VAULT_WRITABLE_EXTENSIONS = new Set(['.md','.txt','.json','.yaml','.yml','.toml','.csv','.tsv']);
+
+function vaultPathBlockReason(source) {
+  const normalized = String(source || '').split('\\').join('/');
+  const parts = normalized.split('/').filter(Boolean);
+  if (parts.some(x => VAULT_DENIED_DIRS.has(x))) return 'runtime_directory';
+  const base = (parts.at(-1) || '').toLowerCase();
+  if (VAULT_DENIED_BASENAMES.has(base)) return 'secret_name';
+  if (base.startsWith('id_rsa') || base.startsWith('id_ed25519')) return 'secret_name';
+  const extension = extname(base).toLowerCase();
+  if (VAULT_DENIED_EXTENSIONS.has(extension)) return 'secret_or_binary_extension';
+  return null;
+}
+
+function assertPairedVaultReadable(source) {
+  const reason = vaultPathBlockReason(source);
+  if (reason) throw coded('vault_access_denied', 'vault path is not remotely readable');
+}
+
+function pairedVaultWritable(source) {
+  if (vaultPathBlockReason(source)) return false;
+  const normalized = String(source || '').split('\\').join('/');
+  const parts = normalized.split('/').filter(Boolean);
+  if (parts.some(x => x.startsWith('.'))) return false;
+  return VAULT_WRITABLE_EXTENSIONS.has(extname(normalized).toLowerCase());
 }
 
 function assertRemoteSourceAllowed(source, content) {
