@@ -11,7 +11,7 @@ create table if not exists public.brain_commands (
   operation text not null check (operation in (
     'avenox_bootstrap','avenox_skill_get',
     'brain_context','brain_source_get','brain_source_update',
-    'brain_vault_list','brain_vault_get','brain_vault_update',
+    'brain_vault_list','brain_vault_find','brain_vault_search','brain_vault_read_range','brain_vault_get','brain_vault_update',
     'brain_note_create','brain_task_create','brain_task_update','brain_receipt',
     'brain_sync','brain_history','brain_skill_sync','brain_companion_compact',
     'brain_preferences_get','brain_preferences_update','brain_doctor',
