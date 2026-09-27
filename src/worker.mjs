@@ -4,19 +4,18 @@ import {
 import {
   resolve, relative, basename, isAbsolute, extname, sep, dirname, join
 } from 'node:path';
-import { tmpdir, homedir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { CAPABILITIES, BRIDGE_API_VERSION } from './capabilities.mjs';
-import { shellModeStatus } from './shell-mode.mjs';
 
 const execFileAsync = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BRIDGE_ROOT = resolve(HERE, '..');
 const BRIDGE_SKILL_PATH = resolve(BRIDGE_ROOT, 'skills', 'avenox-chatgpt-bridge', 'SKILL.v3.md');
-export const REQUIRED_TRANSPORT_SCHEMA = 12;
+export const REQUIRED_TRANSPORT_SCHEMA = 11;
 const RECEIPT_HARNESSES = new Set(['codex','claude','antigravity','hermes','opencode','omp']);
 const JEV_FEATURES = new Set(['context','review','answer','auto_context']);
 const REMOTE_PROTECTED_BASENAMES = new Set([
@@ -90,9 +89,6 @@ export class Bridge {
     if (contract.vault_transport !== 'trusted_supabase_queue') {
       throw coded('transport_contract_invalid', 'Bridge vault transport contract is missing or incompatible');
     }
-    if (contract.owner_shell !== 'local_opt_in') {
-      throw coded('transport_contract_invalid', 'Bridge owner shell contract is missing or incompatible');
-    }
     this._transportContract = contract;
     return contract;
   }
@@ -103,13 +99,12 @@ export class Bridge {
       vault_root: this.c.vault_root,
       poll_interval_ms: this.c.poll_interval_ms,
       transport: await this.transportContract(),
-      shell_mode: await shellModeStatus(BRIDGE_ROOT),
       operations: await this.runtimeCapabilities()
     };
   }
 
   async runtimeCapabilities() {
-    if (this._runtimeCapabilities) return this.withShellAvailability(this._runtimeCapabilities);
+    if (this._runtimeCapabilities) return this._runtimeCapabilities;
 
     const needsCli = new Map([
       ['brain_context','context'],
@@ -181,20 +176,7 @@ export class Bridge {
       }
       return live;
     });
-    return this.withShellAvailability(this._runtimeCapabilities);
-  }
-
-  async withShellAvailability(caps) {
-    const shell = await shellModeStatus(BRIDGE_ROOT);
-    return caps.map(cap => cap.name === 'brain_shell_exec'
-      ? {
-          ...cap,
-          available: shell.enabled === true,
-          unavailable_reason: shell.enabled ? undefined : 'owner_shell_disabled',
-          shell_mode: shell.enabled ? 'on' : 'off'
-        }
-      : cap
-    );
+    return this._runtimeCapabilities;
   }
 
   async cliCommandExists(name) {
@@ -378,9 +360,6 @@ export class Bridge {
 
       case 'brain_vault_update':
         return this.vaultUpdate(payload);
-
-      case 'brain_shell_exec':
-        return this.shellExec(payload);
 
       case 'brain_note_create':
         return this.withTempJson(validateCreatePayload(payload), p => this.runBeyin('note-create', ['--file', p]));
@@ -618,65 +597,6 @@ export class Bridge {
       await rename(restore, real);
       try { await this.runBeyin('sync'); } catch {}
       throw e;
-    }
-  }
-
-  async shellExec(payload) {
-    const shell = await shellModeStatus(BRIDGE_ROOT);
-    if (!shell.enabled) throw coded('shell_disabled', 'owner shell mode is disabled locally');
-
-    const command = requiredString(payload.command, 'command');
-    if (command.length > 1024) throw new Error('command too long');
-
-    const args = payload.args == null ? [] : requiredStringArray(payload.args, 'args');
-    if (args.length > 128) throw new Error('too many shell args');
-    for (const arg of args) {
-      if (arg.length > 8192) throw new Error('shell arg too long');
-    }
-
-    const home = await realpath(homedir());
-    const requestedCwd = payload.cwd == null ? home : requiredString(payload.cwd, 'cwd');
-    const cwd = await realpath(isAbsolute(requestedCwd) ? requestedCwd : resolve(home, requestedCwd));
-    if (!(cwd === home || cwd.startsWith(home + sep))) {
-      throw coded('shell_cwd_denied', 'shell cwd must stay under the local user home');
-    }
-
-    const timeout = payload.timeout_ms == null
-      ? Number(this.c.shell_timeout_ms || 30000)
-      : intInRange(payload.timeout_ms, 1000, 120000, 'timeout_ms');
-
-    try {
-      const { stdout, stderr } = await execFileAsync(command, args, {
-        cwd,
-        windowsHide:true,
-        shell:false,
-        timeout,
-        killSignal:'SIGKILL',
-        maxBuffer:Number(this.c.shell_max_buffer_bytes || 2 * 1024 * 1024)
-      });
-      return {
-        command,
-        args,
-        cwd,
-        exit_code:0,
-        stdout:stdout || '',
-        stderr:stderr || ''
-      };
-    } catch (error) {
-      if (error?.killed || error?.signal === 'SIGKILL') {
-        throw coded('shell_timeout', 'shell command timed out');
-      }
-      if (typeof error?.code === 'number') {
-        return {
-          command,
-          args,
-          cwd,
-          exit_code:error.code,
-          stdout:error.stdout || '',
-          stderr:error.stderr || ''
-        };
-      }
-      throw error;
     }
   }
 
