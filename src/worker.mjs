@@ -106,7 +106,13 @@ export class Bridge {
       const { stdout, stderr } = await execFileAsync(
         py.cmd,
         [...py.prefix, resolve(this.c.vault_root, 'beyin.py'), '-h'],
-        { cwd:this.c.vault_root, windowsHide:true, maxBuffer:2 * 1024 * 1024 }
+        {
+          cwd:this.c.vault_root,
+          windowsHide:true,
+          maxBuffer:2 * 1024 * 1024,
+          timeout:Number(this.c.capability_probe_timeout_ms || 3000),
+          killSignal:'SIGKILL'
+        }
       );
       const match = `${stdout || ''}\n${stderr || ''}`.match(/\{([^}]+)\}/);
       if (match) {
@@ -135,7 +141,13 @@ export class Bridge {
       await execFileAsync(
         py.cmd,
         [...py.prefix, resolve(this.c.vault_root, 'beyin.py'), name, '--help'],
-        { cwd:this.c.vault_root, windowsHide:true, maxBuffer:2 * 1024 * 1024 }
+        {
+          cwd:this.c.vault_root,
+          windowsHide:true,
+          maxBuffer:2 * 1024 * 1024,
+          timeout:Number(this.c.capability_probe_timeout_ms || 3000),
+          killSignal:'SIGKILL'
+        }
       );
       return true;
     } catch {
@@ -161,28 +173,44 @@ export class Bridge {
   }
 
   async handle(cmd) {
-    const supported = await this.supportedCapabilityMap();
-    if (!supported.has(cmd.operation)) {
-      const caps = await this.runtimeCapabilities();
-      return this.finish(cmd, 'failed', null, {
-        error: 'invalid_operation',
-        requested_operation: cmd.operation,
-        allowed_operations: caps.filter(x => x.available !== false).map(x => x.name),
-        unavailable_operations: caps.filter(x => x.available === false).map(x => ({
-          name: x.name,
-          reason: x.unavailable_reason
-        }))
-      });
-    }
+    const timeoutMs = Number(this.c.operation_timeout_ms || 15000);
     try {
-      const timeoutMs = Number(this.c.operation_timeout_ms || 15000);
-      const result = await withTimeout(
-        this.execute(cmd.operation, cmd.payload || {}),
-        timeoutMs,
-        cmd.operation
+      const outcome = await withTimeout((async () => {
+        const supported = await this.supportedCapabilityMap();
+        if (!supported.has(cmd.operation)) {
+          const caps = await this.runtimeCapabilities();
+          return {
+            terminal_status: 'failed',
+            result: null,
+            error: {
+              error: 'invalid_operation',
+              requested_operation: cmd.operation,
+              allowed_operations: caps.filter(x => x.available !== false).map(x => x.name),
+              unavailable_operations: caps.filter(x => x.available === false).map(x => ({
+                name: x.name,
+                reason: x.unavailable_reason
+              }))
+            },
+            projection: {}
+          };
+        }
+
+        const result = await this.execute(cmd.operation, cmd.payload || {});
+        return {
+          terminal_status: 'completed',
+          result,
+          error: null,
+          projection: this.project(cmd.operation, result)
+        };
+      })(), timeoutMs, cmd.operation);
+
+      await this.finish(
+        cmd,
+        outcome.terminal_status,
+        outcome.result,
+        outcome.error,
+        outcome.projection
       );
-      const projection = this.project(cmd.operation, result);
-      await this.finish(cmd, 'completed', result, null, projection);
     } catch (e) {
       const error = {
         error: e.code || 'operation_failed',
