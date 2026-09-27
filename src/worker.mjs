@@ -222,14 +222,16 @@ export class Bridge {
   }
 
   async finish(cmd, status, result, error, p = {}) {
-    return this.rpc('finish_brain_command', {
-      p_id: cmd.id,
-      p_status: status,
-      p_result: result,
-      p_error: error,
-      p_response_text: p.text ?? null,
-      p_source_refs: p.refs ?? [],
-      p_response_kind: p.kind ?? null
+    return this.rpc('finish_brain_command_v2', {
+      p: {
+        id: cmd.id,
+        status,
+        result,
+        error,
+        response_text: p.text ?? null,
+        source_refs: p.refs ?? [],
+        response_kind: p.kind ?? null
+      }
     });
   }
 
