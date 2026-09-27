@@ -138,7 +138,7 @@ test('transport contract accepts required schema and dynamic RPC names', async t
   bridge.rpc = async name => {
     assert.equal(name, 'bridge_transport_contract');
     return {
-      schema_version: 9,
+      schema_version: 10,
       claim_rpc: 'claim_dynamic',
       finish_rpc: 'finish_dynamic',
       command_terminal_statuses: ['completed','failed','conflict']
@@ -146,7 +146,7 @@ test('transport contract accepts required schema and dynamic RPC names', async t
   };
 
   const contract = await bridge.transportContract();
-  assert.equal(contract.schema_version, 9);
+  assert.equal(contract.schema_version, 10);
   assert.equal(contract.claim_rpc, 'claim_dynamic');
   assert.equal(contract.finish_rpc, 'finish_dynamic');
 });
@@ -154,7 +154,7 @@ test('transport contract accepts required schema and dynamic RPC names', async t
 test('transport contract rejects old schema before command handling', async t => {
   const { bridge } = await fixture(t);
   bridge.rpc = async () => ({
-    schema_version: 8,
+    schema_version: 9,
     claim_rpc: 'claim_dynamic',
     finish_rpc: 'finish_dynamic'
   });
@@ -167,7 +167,7 @@ test('transport contract rejects old schema before command handling', async t =>
 
 test('transport contract rejects missing RPC names', async t => {
   const { bridge } = await fixture(t);
-  bridge.rpc = async () => ({ schema_version: 9 });
+  bridge.rpc = async () => ({ schema_version: 10 });
 
   await assert.rejects(
     () => bridge.transportContract(),
@@ -179,7 +179,7 @@ test('claim and finish use RPC names from live transport contract', async t => {
   const { bridge } = await fixture(t);
   const calls = [];
   bridge._transportContract = {
-    schema_version: 9,
+    schema_version: 10,
     claim_rpc: 'claim_dynamic',
     finish_rpc: 'finish_dynamic'
   };
