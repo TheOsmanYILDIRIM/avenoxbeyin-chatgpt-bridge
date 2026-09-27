@@ -13,3 +13,14 @@ jobs:
         with:
           node-version: 20
       - run: npm test
+
+  upstream-proposal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          python -m py_compile             upstream-patch/template/.claude/scripts/beyin_v3_chatgpt.py             upstream-patch/template/.claude/scripts/beyin_v3.py             upstream-patch/template/.claude/scripts/beyin_v3_sync.py             upstream-patch/scripts/beyin_v3.py             upstream-patch/scripts/beyin_entry.py
+          python upstream-patch/tests/v3_chatgpt_test.py
