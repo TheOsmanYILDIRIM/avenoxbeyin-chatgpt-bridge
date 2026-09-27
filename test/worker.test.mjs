@@ -98,6 +98,23 @@ console.log(JSON.stringify({status:'ok'}));
   );
 });
 
+test('receipt defaults to chatgpt attribution in coordinated upstream mode', async t => {
+  const script = String.raw`
+const fs = await import('node:fs/promises');
+const fileIndex = process.argv.indexOf('--file');
+const harnessIndex = process.argv.indexOf('--harness');
+const body = JSON.parse(await fs.readFile(process.argv[fileIndex + 1], 'utf8'));
+console.log(JSON.stringify({status:'ok', harness:process.argv[harnessIndex + 1], body}));
+`;
+  const { bridge } = await fixture(t, script);
+  const result = await bridge.execute('brain_receipt', {
+    event_id:'chatgpt-receipt',
+    summary:'Synthetic bridge receipt.',
+    refs:['notes/result.md']
+  });
+  assert.equal(result.harness, 'chatgpt');
+});
+
 test('capability discovery probes commands missing from top-level help safely', async t => {
   const script = String.raw`
 const args = process.argv.slice(2);
