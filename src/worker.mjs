@@ -13,6 +13,10 @@ import { CAPABILITIES, CAPABILITY_MAP, BRIDGE_API_VERSION } from './capabilities
 const execFileAsync = promisify(execFile);
 const RECEIPT_HARNESSES = new Set(['codex','claude','antigravity','hermes','opencode','omp']);
 const JEV_FEATURES = new Set(['context','review','answer','auto_context']);
+const REMOTE_PROTECTED_BASENAMES = new Set([
+  'Core.md','Soul.md','Kurallar.md','Last-Session.md','Threads.md','Journal.md',
+  'AGENTS.md','CLAUDE.md'
+]);
 
 export class Bridge {
   constructor(config) {
@@ -73,29 +77,6 @@ export class Bridge {
   async runtimeCapabilities() {
     if (this._runtimeCapabilities) return this._runtimeCapabilities;
 
-    const py = this.pythonInvocation();
-    let help = '';
-    try {
-      const { stdout, stderr } = await execFileAsync(
-        py.cmd,
-        [...py.prefix, resolve(this.c.vault_root, 'beyin.py'), '-h'],
-        {
-          cwd: this.c.vault_root,
-          windowsHide: true,
-          maxBuffer: 2 * 1024 * 1024
-        }
-      );
-      help = `${stdout || ''}\n${stderr || ''}`;
-    } catch (e) {
-      help = `${e.stdout || ''}\n${e.stderr || ''}`;
-    }
-
-    const cli = new Set();
-    const match = help.match(/\{([^}]+)\}/);
-    if (match) {
-      for (const name of match[1].split(',').map(x => x.trim()).filter(Boolean)) cli.add(name);
-    }
-
     const needsCli = new Map([
       ['brain_context','context'],
       ['brain_note_create','note-create'],
@@ -119,18 +100,47 @@ export class Bridge {
       ['brain_jev_memory','jev-memory']
     ]);
 
+    const cli = new Set();
+    const py = this.pythonInvocation();
+    try {
+      const { stdout, stderr } = await execFileAsync(
+        py.cmd,
+        [...py.prefix, resolve(this.c.vault_root, 'beyin.py'), '-h'],
+        { cwd:this.c.vault_root, windowsHide:true, maxBuffer:2 * 1024 * 1024 }
+      );
+      const match = `${stdout || ''}\n${stderr || ''}`.match(/\{([^}]+)\}/);
+      if (match) {
+        for (const name of match[1].split(',').map(x => x.trim()).filter(Boolean)) cli.add(name);
+      }
+    } catch {}
+
+    // Installed V3 dispatches update/rollback/recover before the normal CLI parser,
+    // so they may be absent from top-level -h. Probe only missing commands with
+    // --help; argparse exits before executing the command, so this has no side effect.
+    const missing = [...new Set(needsCli.values())].filter(name => !cli.has(name));
+    for (const name of missing) {
+      if (await this.cliCommandExists(name)) cli.add(name);
+    }
+
     this._runtimeCapabilities = CAPABILITIES.map(cap => {
       const cliName = needsCli.get(cap.name);
-      if (!cliName) return { ...cap, available: true };
-      const available = cli.size === 0 ? null : cli.has(cliName);
-      return {
-        ...cap,
-        available,
-        ...(available === false ? { unavailable_reason: `local beyin.py does not expose ${cliName}` } : {})
-      };
+      return { ...cap, available: cliName ? cli.has(cliName) : true };
     });
-
     return this._runtimeCapabilities;
+  }
+
+  async cliCommandExists(name) {
+    const py = this.pythonInvocation();
+    try {
+      await execFileAsync(
+        py.cmd,
+        [...py.prefix, resolve(this.c.vault_root, 'beyin.py'), name, '--help'],
+        { cwd:this.c.vault_root, windowsHide:true, maxBuffer:2 * 1024 * 1024 }
+      );
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async supportedCapabilityMap() {
@@ -169,10 +179,12 @@ export class Bridge {
       const projection = this.project(cmd.operation, result);
       await this.finish(cmd, 'completed', result, null, projection);
     } catch (e) {
-      await this.finish(cmd, e.code === 'conflict' ? 'conflict' : 'failed', null, {
+      const error = {
         error: e.code || 'operation_failed',
         message: e.message
-      });
+      };
+      if (e.brain_error) error.brain_error = e.brain_error;
+      await this.finish(cmd, e.code === 'conflict' ? 'conflict' : 'failed', null, error);
     }
   }
 
@@ -200,16 +212,20 @@ export class Bridge {
 
   async runBeyin(sub, args = []) {
     const py = this.pythonInvocation();
-    const { stdout } = await execFileAsync(
-      py.cmd,
-      [...py.prefix, ...this.beyinArgs(sub, args)],
-      {
-        cwd: this.c.vault_root,
-        windowsHide: true,
-        maxBuffer: 16 * 1024 * 1024
-      }
-    );
-    return JSON.parse(stdout);
+    try {
+      const { stdout } = await execFileAsync(
+        py.cmd,
+        [...py.prefix, ...this.beyinArgs(sub, args)],
+        {
+          cwd: this.c.vault_root,
+          windowsHide: true,
+          maxBuffer: 16 * 1024 * 1024
+        }
+      );
+      return JSON.parse(stdout);
+    } catch (e) {
+      throw parseBeyinFailure(e);
+    }
   }
 
   async withTempJson(value, fn) {
@@ -421,8 +437,10 @@ export class Bridge {
     const s = await stat(real);
     if (s.size > (this.c.max_source_bytes || 262144)) throw new Error('source too large');
     const content = await readFile(real, 'utf8');
+    const rel = relative(root, real).split(sep).join('/');
+    assertRemoteSourceAllowed(rel, content);
     return {
-      source: relative(root, real).split(sep).join('/'),
+      source: rel,
       size_bytes: s.size,
       sha256: sha(content),
       content
@@ -435,8 +453,9 @@ export class Bridge {
     const content = requiredStringAllowEmpty(payload.content, 'content');
     const { root, real } = await this.safeMarkdownPath(source);
     const current = await readFile(real, 'utf8');
-    if (sha(current) !== expected) throw coded('conflict', 'source hash changed');
     const rel = relative(root, real).split(sep).join('/');
+    assertRemoteSourceAllowed(rel, current);
+    if (sha(current) !== expected) throw coded('conflict', 'source hash changed');
     if (/(^|\/)tasks\//i.test(rel) || /^---[\s\S]{0,4096}?^kind:\s*task\s*$/mi.test(current)) {
       throw new Error('task sources must use brain_task_update');
     }
@@ -519,6 +538,60 @@ function extractRefs(value) {
   };
   walk(value);
   return [...refs];
+}
+
+function assertRemoteSourceAllowed(source, content) {
+  const reason = remoteSourceBlockReason(source, content);
+  if (reason) throw coded('access_denied_private_source', 'source is not available to remote clients');
+}
+
+function remoteSourceBlockReason(source, content) {
+  if (REMOTE_PROTECTED_BASENAMES.has(basename(source))) return 'protected_name';
+  const fm = frontmatter(content);
+  if (!fm) return null;
+  if (/^\s*visibility\s*:\s*['"]?private['"]?\s*$/im.test(fm) ||
+      /["']visibility["']\s*:\s*["']private["']/i.test(fm)) return 'private_visibility';
+  if (/^\s*remote_allowed\s*:\s*false\s*$/im.test(fm) ||
+      /["']remote_allowed["']\s*:\s*false\b/i.test(fm)) return 'remote_disabled';
+  const yamlSensitivity = fm.match(/^\s*sensitivity\s*:\s*['"]?([^'"\s]+)['"]?\s*$/im);
+  const jsonSensitivity = fm.match(/["']sensitivity["']\s*:\s*["']([^"']+)["']/i);
+  const sensitivity = (yamlSensitivity?.[1] || jsonSensitivity?.[1] || '').toLowerCase();
+  if (sensitivity && !['public','internal','normal'].includes(sensitivity)) return 'sensitive';
+  return null;
+}
+
+function frontmatter(content) {
+  if (typeof content !== 'string' || !content.startsWith('---')) return '';
+  const end = content.indexOf('\n---', 3);
+  return end < 0 ? '' : content.slice(3, end);
+}
+
+function parseBeyinFailure(error) {
+  const detail = lastJsonObject(error?.stderr) || lastJsonObject(error?.stdout);
+  if (!detail) return coded('beyin_process_error', error?.message || 'beyin command failed');
+
+  const brainError = String(detail.error || 'BeyinError');
+  const message = String(detail.message || brainError);
+  const combined = `${brainError} ${message}`;
+  const code = /conflict/i.test(combined)
+    ? 'conflict'
+    : brainError === 'ValueError'
+      ? 'validation_error'
+      : 'beyin_error';
+  const result = coded(code, message);
+  result.brain_error = brainError;
+  return result;
+}
+
+function lastJsonObject(value) {
+  const lines = String(value || '').trim().split(/\r?\n/).reverse();
+  for (const line of lines) {
+    try {
+      const parsed = JSON.parse(line);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+    } catch {}
+  }
+  return null;
 }
 
 function validateCreatePayload(payload) {
