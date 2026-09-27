@@ -37,6 +37,6 @@ test('fresh-install schema exposes the same transport RPC names advertised by th
 
   assert.equal(claim, 'claim_next_brain_command_v2');
   assert.equal(finish, 'finish_brain_command_v2');
-  assert.match(schema, new RegExp(`create or replace function public\\.${claim}\\\\(\\\\)`, 'i'));
-  assert.match(schema, new RegExp(`create or replace function public\\.${finish}\\\\(p jsonb\\\\)`, 'i'));
+  assert.equal(schema.toLowerCase().includes(`create or replace function public.${claim}()`), true);
+  assert.equal(schema.toLowerCase().includes(`create or replace function public.${finish}(p jsonb)`), true);
 });
