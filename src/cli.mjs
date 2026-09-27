@@ -4,7 +4,6 @@ import { resolve } from 'node:path';
 import { Bridge } from './worker.mjs';
 import { DEFAULT_ROOT, checkUpdate, applyUpdate, rollbackUpdate } from './updater.mjs';
 import { startWorker, stopWorker, workerStatus } from './process.mjs';
-import { createPairing, listPairings, revokePairing } from './secure.mjs';
 
 const args = process.argv.slice(2);
 const command = args[0] || 'run';
@@ -26,13 +25,7 @@ if (command === 'update') {
 } else if (command === 'status') {
   if (args.length !== 1) throw new Error('usage: avenox-bridge status');
   console.log(JSON.stringify(await workerStatus(), null, 2));
-} else if (command === 'pair') {
-  const extra = args.slice(1);
-  if (extra.length === 1 && extra[0] === '--list') {
-    console.log(JSON.stringify({ pairings: await listPairings(DEFAULT_ROOT) }, null, 2));
-  } else if (extra.length === 2 && extra[0] === '--revoke') {
-    console.log(JSON.stringify(await revokePairing(DEFAULT_ROOT, extra[1]), null, 2));
-  } else {
+} else {
     let name = 'chatgpt-project';
     let expiresDays = 30;
     for (let i = 0; i < extra.length; i++) {
