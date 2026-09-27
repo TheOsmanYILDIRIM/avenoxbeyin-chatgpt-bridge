@@ -5,10 +5,18 @@
   "type": "module",
   "description": "ChatGPT Web bridge for Avenox Beyin V3 using Supabase as a secure command/response transport.",
   "license": "MIT",
-  "engines": {"node": ">=20"},
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node src/cli.mjs run",
     "doctor": "node src/cli.mjs doctor",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "update": "node src/cli.mjs update",
+    "update:check": "node src/cli.mjs update --check",
+    "rollback": "node src/cli.mjs rollback"
+  },
+  "bin": {
+    "avenox-bridge": "src/cli.mjs"
   }
 }
