@@ -1,14 +1,11 @@
-# ChatGPT project instructions
+# ChatGPT Project Instructions
 
-Before the first meaningful Avenox/Brain task in a conversation, use the connected Supabase project `avenox-bridge` (`qkywbefhhcwnmsrhprnh`) to run `avenox_bootstrap`.
+İlk anlamlı Avenox/Beyin görevinden önce bağlı Supabase projesi `avenox-bridge` (`qkywbefhhcwnmsrhprnh`) üzerinden `avenox_bootstrap` çalıştır.
 
-Bootstrap is not required for simple greetings or social conversation.
+`avenox_bootstrap` için `public.brain_commands` queue akışını kullan. Oluşturulan command ID'yi takip et ve yalnız o command'in durumunu + `brain_responses` sonucunu oku. `pending`, `claimed` veya `running` ise aynı assistant turunda yeniden kontrol et; kullanıcıdan “devam et” isteme ve aynı işi yeni command oluşturarak tekrar başlatma.
 
-Treat the bootstrap response fields `bridge_skill`, `bridge_capabilities`, `core_skill`, and `skills_manifest` as the current Avenox contract for that conversation and follow them.
+Basit selamlaşma ve sosyal sohbet için bootstrap gerekmez.
 
-Do not guess operation names, payload fields, transport behavior, or capabilities. If the live contract does not provide the required information, do not invent it.
+Bootstrap çıktısındaki `bridge_skill`, `bridge_capabilities`, `core_skill` ve `skills_manifest` alanlarını bu konuşma için güncel Avenox sözleşmesi kabul et ve uygula.
 
-
-Optional paired full-vault mode:
-
-If the private Project contains `AVENOX_PAIRING_TOKEN=<AVX3 token>`, never echo or send that token to Supabase or any external tool. Use it only in local/in-process cryptography according to the live `bridge_skill`. For capabilities marked `secure_transport_required: true`, encrypt the inner payload before enqueue and decrypt `brain_commands.result` after completion.
+Operation adı, payload alanı, transport davranışı veya capability tahmin etme. Canlı sözleşmede bilgi yoksa uydurma.
