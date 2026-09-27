@@ -741,7 +741,7 @@ class SyncEngine:
     def receipt(self, event_id, summary, refs, harness, session=None):
         if not isinstance(event_id, str) or not event_id.strip() or not isinstance(summary, str) or not summary.strip():
             raise ValueError('event id and summary required')
-        if harness not in HARNESSES + ('manual',) or not isinstance(refs, list) or not refs:
+        if harness not in HARNESSES + ('manual', 'chatgpt') or not isinstance(refs, list) or not refs:
             raise ValueError('harness and refs required')
         summary, redacted = self._protect(summary)
         refs = [self.store._source(ref) for ref in refs]
