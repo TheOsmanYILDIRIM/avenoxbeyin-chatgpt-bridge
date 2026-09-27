@@ -70,6 +70,19 @@ export const CAPABILITIES = [
     }, additionalProperties:false }
   },
   {
+    name: 'brain_shell_exec',
+    mode: 'write',
+    description: 'Execute one local owner-approved command when shell mode is enabled locally. Uses argv execution rather than shell string evaluation.',
+    maps_to: 'local execFile command adapter',
+    user_intent_required: true,
+    payload_schema: { type:'object', required:['command'], properties:{
+      command:{type:'string'},
+      args:{type:'array',items:{type:'string'}},
+      cwd:{type:'string'},
+      timeout_ms:{type:'integer'}
+    }, additionalProperties:false }
+  },
+  {
     name: 'brain_note_create',
     mode: 'write',
     description: 'Create a new note/knowledge source using the official Brain transaction.',
