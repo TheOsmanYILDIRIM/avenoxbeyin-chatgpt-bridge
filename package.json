@@ -3,7 +3,7 @@
   "version": "0.3.0",
   "private": false,
   "type": "module",
-  "description": "ChatGPT Web bridge for Avenox Beyin V3 with versioned Supabase transport and paired AES-GCM full-vault access.",
+  "description": "ChatGPT Web bridge for Avenox Beyin V3 using a versioned trusted Supabase queue with guarded full-vault access.",
   "license": "MIT",
   "engines": {
     "node": ">=20"
@@ -11,7 +11,7 @@
   "scripts": {
     "start": "node src/cli.mjs run",
     "doctor": "node src/cli.mjs doctor",
-    "test": "node --test test/*.test.mjs",
+    "test": "node --test test/process.test.mjs test/source.test.mjs test/updater.test.mjs test/worker-v11.test.mjs test/transport-v11.test.mjs",
     "update": "node src/cli.mjs update",
     "update:check": "node src/cli.mjs update --check",
     "rollback": "node src/cli.mjs rollback",
