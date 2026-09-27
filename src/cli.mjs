@@ -25,6 +25,12 @@ if (command === 'update') {
 } else if (command === 'status') {
   if (args.length !== 1) throw new Error('usage: avenox-bridge status');
   console.log(JSON.stringify(await workerStatus(), null, 2));
+} else if (command === 'pair') {
+  console.log(JSON.stringify({
+    status: 'not_required',
+    vault_transport: 'trusted_supabase_queue',
+    message: 'Bridge API v3 no longer requires pairing. Full-vault access uses the authenticated Supabase queue.'
+  }, null, 2));
 } else {
     let name = 'chatgpt-project';
     let expiresDays = 30;
