@@ -30,11 +30,16 @@ npm test
 
 cat > "$BIN" <<EOF
 #!/bin/sh
-exec node "$ROOT/src/cli.mjs" "\$@"
+if [ -f "$ROOT/.env" ]; then
+  exec node --env-file="$ROOT/.env" "$ROOT/src/cli.mjs" "\$@"
+else
+  exec node "$ROOT/src/cli.mjs" "\$@"
+fi
 EOF
 chmod +x "$BIN"
 
 echo "Kurulum tamam: $BIN"
+echo "Worker:     avenox-bridge start | stop | status"
 echo "Guncelleme: avenox-bridge update"
 echo "Kontrol:    avenox-bridge update --check"
 echo "Geri al:    avenox-bridge rollback"
