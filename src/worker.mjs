@@ -425,6 +425,15 @@ export class Bridge {
       case 'brain_vault_list':
         return this.vaultList(payload);
 
+      case 'brain_vault_find':
+        return this.vaultFind(payload);
+
+      case 'brain_vault_search':
+        return this.vaultSearch(payload);
+
+      case 'brain_vault_read_range':
+        return this.vaultReadRange(payload);
+
       case 'brain_vault_get':
         return this.vaultGet(payload.source);
 
@@ -741,6 +750,161 @@ export class Bridge {
     };
   }
 
+  async vaultSearchRoot(pathValue) {
+    const root = await realpath(this.c.vault_root);
+    if (pathValue == null || pathValue === '' || pathValue === '.') {
+      return { root, start:root, rel:'.' };
+    }
+    const requested = requiredString(pathValue, 'path');
+    if (isAbsolute(requested) || requested.split(/[\\/]/).includes('..')) {
+      throw new Error('invalid vault path');
+    }
+    const start = await realpath(resolve(root, requested));
+    if (!(start === root || start.startsWith(root + sep))) {
+      throw new Error('vault path escapes root');
+    }
+    const rel = relative(root, start).split(sep).join('/') || '.';
+    if (rel !== '.' && vaultPathBlockReason(rel)) {
+      throw coded('vault_access_denied', 'vault path is not remotely readable');
+    }
+    return { root, start, rel };
+  }
+
+  async vaultWalkFiles(start, root, maxFiles = 5000) {
+    const files = [];
+    let truncated = false;
+    const visit = async path => {
+      if (files.length >= maxFiles) {
+        truncated = true;
+        return;
+      }
+      const s = await stat(path);
+      const rel = relative(root, path).split(sep).join('/');
+      if (rel && vaultPathBlockReason(rel)) return;
+      if (s.isFile()) {
+        files.push({ real:path, rel, size_bytes:s.size });
+        return;
+      }
+      if (!s.isDirectory()) return;
+      for (const entry of await readdir(path, { withFileTypes:true })) {
+        if (files.length >= maxFiles) {
+          truncated = true;
+          break;
+        }
+        if (entry.isSymbolicLink()) continue;
+        await visit(resolve(path, entry.name));
+      }
+    };
+    await visit(start);
+    return { files, truncated };
+  }
+
+  async vaultFind(payload = {}) {
+    const query = requiredString(payload.query, 'query').toLowerCase();
+    const maxResults = payload.max_results == null
+      ? 100
+      : intInRange(payload.max_results, 1, 500, 'max_results');
+    const { root, start, rel:path } = await this.vaultSearchRoot(payload.path);
+    const walked = await this.vaultWalkFiles(start, root, Number(this.c.vault_search_max_files || 5000));
+    const matches = [];
+    for (const file of walked.files) {
+      if (file.rel.toLowerCase().includes(query)) {
+        matches.push({
+          source:file.rel,
+          size_bytes:file.size_bytes,
+          writable:pairedVaultWritable(file.rel)
+        });
+        if (matches.length >= maxResults) break;
+      }
+    }
+    return {
+      query: payload.query,
+      path,
+      truncated: walked.truncated || matches.length >= maxResults,
+      matches
+    };
+  }
+
+  async vaultSearch(payload = {}) {
+    const query = requiredString(payload.query, 'query');
+    const caseSensitive = payload.case_sensitive === true;
+    const needle = caseSensitive ? query : query.toLowerCase();
+    const maxResults = payload.max_results == null
+      ? 100
+      : intInRange(payload.max_results, 1, 500, 'max_results');
+    const maxPerFile = payload.max_matches_per_file == null
+      ? 20
+      : intInRange(payload.max_matches_per_file, 1, 100, 'max_matches_per_file');
+    const extensions = payload.extensions == null
+      ? null
+      : validateExtensions(payload.extensions);
+    const { root, start, rel:path } = await this.vaultSearchRoot(payload.path);
+    const walked = await this.vaultWalkFiles(start, root, Number(this.c.vault_search_max_files || 5000));
+    const maxBytes = Number(this.c.max_vault_file_bytes || 1048576);
+    const matches = [];
+    let scannedFiles = 0;
+
+    for (const file of walked.files) {
+      if (matches.length >= maxResults) break;
+      if (file.size_bytes > maxBytes) continue;
+      if (extensions && !extensions.has(extname(file.rel).toLowerCase())) continue;
+
+      const raw = await readFile(file.real);
+      if (raw.includes(0)) continue;
+      scannedFiles += 1;
+      const lines = raw.toString('utf8').split(/\r?\n/);
+      let fileMatches = 0;
+      for (let i = 0; i < lines.length; i++) {
+        if (matches.length >= maxResults || fileMatches >= maxPerFile) break;
+        const haystack = caseSensitive ? lines[i] : lines[i].toLowerCase();
+        const column = haystack.indexOf(needle);
+        if (column < 0) continue;
+        matches.push({
+          source:file.rel,
+          line:i + 1,
+          column:column + 1,
+          excerpt:boundedExcerpt(lines[i], column, query.length)
+        });
+        fileMatches += 1;
+      }
+    }
+
+    return {
+      query,
+      path,
+      case_sensitive:caseSensitive,
+      scanned_files:scannedFiles,
+      truncated:walked.truncated || matches.length >= maxResults,
+      matches
+    };
+  }
+
+  async vaultReadRange(payload = {}) {
+    const source = requiredString(payload.source, 'source');
+    const startLine = intInRange(payload.start_line, 1, 10000000, 'start_line');
+    const endLine = intInRange(payload.end_line, startLine, 10000000, 'end_line');
+    if (endLine - startLine + 1 > 500) {
+      throw new Error('line range exceeds 500 lines');
+    }
+    const { real, rel } = await this.safeVaultPath(source);
+    const s = await stat(real);
+    if (!s.isFile()) throw new Error('vault source is not a file');
+    if (s.size > (this.c.max_vault_file_bytes || 1048576)) throw new Error('vault source too large');
+    const raw = await readFile(real);
+    if (raw.includes(0)) throw coded('binary_source_rejected', 'binary vault source is not supported');
+    const text = raw.toString('utf8');
+    const lines = text.split(/\r?\n/);
+    const actualEnd = Math.min(endLine, lines.length);
+    return {
+      source:rel,
+      sha256:sha(raw),
+      total_lines:lines.length,
+      start_line:startLine,
+      end_line:actualEnd,
+      content:startLine > lines.length ? '' : lines.slice(startLine - 1, actualEnd).join('\n')
+    };
+  }
+
   async vaultGet(source) {
     const { real, rel } = await this.safeVaultPath(requiredString(source, 'source'));
     const s = await stat(real);
@@ -812,8 +976,12 @@ export class Bridge {
     if (op === 'brain_source_get' || op === 'brain_vault_get') {
       return { kind:'source', refs:[result.source], text:result.content };
     }
-    if (op === 'brain_vault_list') {
-      return { kind:'source', refs:[], text:JSON.stringify(result, null, 2) };
+    if (['brain_vault_list','brain_vault_find','brain_vault_search','brain_vault_read_range'].includes(op)) {
+      return {
+        kind:'source',
+        refs:extractRefs(result),
+        text:op === 'brain_vault_read_range' ? result.content : JSON.stringify(result, null, 2)
+      };
     }
 
     if (op === 'avenox_bootstrap') {
@@ -944,6 +1112,28 @@ function lastJsonObject(value) {
     } catch {}
   }
   return null;
+}
+
+function validateExtensions(value) {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 32) {
+    throw new Error('extensions must be a non-empty array with at most 32 values');
+  }
+  const out = new Set();
+  for (const item of value) {
+    if (typeof item !== 'string' || !/^\.[A-Za-z0-9]+$/.test(item)) {
+      throw new Error('invalid extension');
+    }
+    out.add(item.toLowerCase());
+  }
+  return out;
+}
+
+function boundedExcerpt(line, column, matchLength) {
+  const max = 400;
+  if (line.length <= max) return line;
+  const center = column + Math.max(1, matchLength) / 2;
+  const start = Math.max(0, Math.min(line.length - max, Math.floor(center - max / 2)));
+  return (start > 0 ? '…' : '') + line.slice(start, start + max) + (start + max < line.length ? '…' : '');
 }
 
 function validateCreatePayload(payload) {
