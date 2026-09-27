@@ -3,7 +3,7 @@
 ```text
 ChatGPT Web / Supabase connector
         |
-        | insert command
+        | normal command OR paired AES-256-GCM envelope
         v
 public.brain_commands
         |
@@ -12,13 +12,20 @@ public.brain_commands
 Local worker
 (Linux / macOS / Windows / Termux)
         |
-        | validated operation adapter
+        +--> normal validated capability adapters
+        |
+        +--> secure paired vault adapter
+        |      - AES-GCM authentication/decryption
+        |      - expiry + replay rejection
+        |      - vault-root/path/secret guards
+        |
         v
 Avenox Beyin V3 / beyin.py / managed skills / vault
         |
-        | finish RPC + response projection
+        | normal: finish RPC + projected response
+        | secure: encrypted result envelope
         v
-public.brain_responses
+Supabase relay
         |
         v
 ChatGPT reads only its command result
@@ -28,6 +35,11 @@ ChatGPT reads only its command result
 
 The Bridge is a safe remote API for Avenox Beyin, not a remote shell.
 
+Bridge API v3 separates two trust levels:
+
+- **unpaired remote operations**: conservative source/privacy boundary;
+- **paired secure vault operations**: trusted Brain-content access over authenticated encryption.
+
 Every exposed operation has a machine-readable contract:
 - name
 - mode: read / write / maintenance
@@ -35,50 +47,72 @@ Every exposed operation has a machine-readable contract:
 - payload schema
 - mapping to the official Avenox entry point
 - explicit-user-intent requirement when relevant
+- `secure_transport_required` when the payload must be encrypted
 
-The current catalog lives in `src/capabilities.mjs` and is also included in bootstrap output so an AI client can discover the live contract instead of guessing.
+The catalog lives in `src/capabilities.mjs` and bootstrap returns the live contract.
 
-## Coverage
+## Secure pairing
 
-The generic worker covers the major functions described by the current Avenox skills:
-- context, exact source read and history
-- notes, tasks and receipts
-- CAS-protected Markdown source updates + sync
-- sync and skill-sync
-- companion compact
-- preferences read/update
-- doctor
-- update check, update, dismiss, rollback, recover
-- Jev status/config/memory review
-- dynamic bootstrap and skill reads
+`avenox-bridge pair` creates a 32-byte shared secret locally and stores it in `.bridge-pairings.json` with mode 0600. The secret is never written to Supabase.
 
-Operations that modify Markdown use constrained adapters. There is no arbitrary command or shell operation.
+Secure commands use:
+
+- HKDF-SHA256
+- AES-256-GCM
+- 12-byte random nonce
+- authenticated operation name
+- short command expiry
+- local replay cache
+- pairing expiry/revocation
+
+Supabase sees the operation name and encrypted envelope, but not the vault path/content or secure result plaintext.
+
+## Full-vault boundary
+
+Paired capabilities:
+- `brain_vault_list`
+- `brain_vault_get`
+- `brain_vault_update`
+
+They can read normal Brain vault text, including companion/private Markdown such as `Core.md`, `Last-Session.md`, `Threads.md`, `Kurallar.md`, and `Journal.md`.
+
+Security remains narrower than local shell access:
+- no arbitrary shell
+- no path traversal
+- no symlink escape
+- explicit credential/runtime denylist
+- binary/secret DB/key files rejected
+- writes restricted to safe content extensions
+- hidden/runtime content is read-only where appropriate
+- task sources still require revision-aware task operations
+- updates remain SHA-256 CAS protected and sync-backed
 
 ## Data integrity
 
 Task writes use Avenox task transactions and revision checks.
 
-Generic Markdown updates require:
-1. an existing canonical Markdown source,
-2. a previously observed SHA-256,
-3. a matching current hash,
-4. atomic replacement,
-5. successful `beyin.py sync`.
+Content updates require a previously observed SHA-256. If sync fails, the worker restores the prior source and attempts to re-sync.
 
-If sync fails, the worker restores the prior source and attempts to re-sync.
+## Version handshake
 
-## Transport
+Worker startup calls `bridge_transport_contract()` before claiming work.
 
-The standard transport is deliberately simple:
-1. ChatGPT enqueues.
-2. Worker polls and executes.
-3. Worker writes a projected response.
-4. ChatGPT reads the result.
+The worker verifies:
+- minimum transport schema version
+- claim/finish RPC names
+- secure envelope version
+- cipher
+- secure result location
 
-An experimental long-running SQL procedure was removed because ChatGPT's Supabase security layer could reject it. The queue/result flow is slower but much more portable across ChatGPT plans and connectors.
+An incompatible database therefore fails at startup instead of producing stuck commands.
 
-## Security boundary
+## Release order
 
-The worker uses a dedicated Supabase Auth account and a publishable key. Worker RPCs verify `auth.uid()` against `private.bridge_workers`.
+Database changes are expand-first:
 
-The public queue tables remain RLS-protected and are not directly available to ordinary anon/authenticated Data API clients.
+1. add/apply backward-compatible migration;
+2. verify live transport contract;
+3. publish worker code;
+4. pass Node + cross-language crypto + PostgreSQL tests;
+5. update/restart worker;
+6. run live bootstrap E2E.
