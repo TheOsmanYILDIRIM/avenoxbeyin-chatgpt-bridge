@@ -14,7 +14,10 @@
     "test": "node --test test/*.test.mjs",
     "update": "node src/cli.mjs update",
     "update:check": "node src/cli.mjs update --check",
-    "rollback": "node src/cli.mjs rollback"
+    "rollback": "node src/cli.mjs rollback",
+    "worker:start": "node src/cli.mjs start",
+    "worker:stop": "node src/cli.mjs stop",
+    "worker:status": "node src/cli.mjs status"
   },
   "bin": {
     "avenox-bridge": "src/cli.mjs"
