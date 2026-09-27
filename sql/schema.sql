@@ -7,7 +7,7 @@ create schema if not exists private;
 
 create table if not exists public.brain_commands (
   id uuid primary key default gen_random_uuid(),
-  idempotency_key text unique not null,
+  idempotency_key text unique not null default gen_random_uuid()::text,
   operation text not null check (operation in (
     'avenox_bootstrap','avenox_skill_get',
     'brain_context','brain_source_get','brain_source_update',
@@ -68,6 +68,18 @@ begin
   if v_worker is null then
     raise exception 'unauthorized worker';
   end if;
+
+  update public.brain_commands c
+  set status='failed',
+      error=jsonb_build_object(
+        'error','stale_claim_recovered',
+        'message','stale claimed/running command was closed before claiming new work'
+      ),
+      completed_at=now(),
+      updated_at=now()
+  where c.worker_id=v_uid::text
+    and c.status in ('claimed','running')
+    and c.updated_at < now() - interval '60 seconds';
 
   return query
   with candidate as (
