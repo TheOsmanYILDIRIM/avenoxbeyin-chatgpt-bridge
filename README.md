@@ -116,6 +116,25 @@ Worker startup validates the live transport contract before claiming commands.
 
 Database changes follow an expand-first migration order so an older worker can continue operating while the database is upgraded.
 
+## Local command telemetry
+
+The worker keeps a local JSONL command log at:
+
+```text
+.bridge-command-log.jsonl
+```
+
+It records command/runtime metadata only: command ID, operation, terminal status, error code, queue/claim/execution/total timings, worker commit, Brain version and transport-finish status.
+
+Payloads, results and vault content are intentionally not logged.
+
+The file rotates to `.bridge-command-log.jsonl.1` at 5 MiB by default. Inspect recent entries locally with:
+
+```sh
+avenox-bridge logs
+avenox-bridge logs 100
+```
+
 ## Tests
 
 ```sh
