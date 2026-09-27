@@ -32,6 +32,14 @@ ChatGPT Web
 
 The Bridge now exposes a machine-readable capability catalog covering context/source reads, note/task/receipt writes, sync/history/skill-sync, companion compact, preferences, update/rollback/recover, Jev controls, bootstrap and skill reads. The generic worker maps each operation to a validated Avenox entry point and never exposes arbitrary shell execution.
 
+## Tests
+
+```sh
+npm test
+```
+
+The test suite covers the remote source privacy gate, CAS update behavior, structured Brain CLI error mapping, and capability discovery for commands dispatched outside the normal top-level help parser.
+
 ## Requirements
 
 - Avenox Beyin V3 installed locally
@@ -56,6 +64,8 @@ The Bridge now exposes a machine-readable capability catalog covering context/so
 The generic worker now implements the Bridge API v2 capability catalog. It covers live context/source reads, note/task/receipt writes, sync/history/skill reconciliation, companion maintenance, preferences, update lifecycle and Jev controls through validated adapters. Bootstrap returns the machine-readable capability catalog so AI clients do not need to guess operation names or payloads.
 
 The worker never exposes arbitrary shell execution. Existing Markdown replacement is CAS-protected with SHA-256 and task sources are forced through the official task transaction.
+
+Exact remote source reads/writes also enforce a small privacy boundary: Companion/identity sources and Markdown explicitly marked private, local-only, or sensitive are rejected before content is returned or changed.
 
 ## Upstream contribution path
 
