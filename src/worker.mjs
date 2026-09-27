@@ -96,6 +96,10 @@ export class Bridge {
     return contract;
   }
 
+  bridgeRoot() {
+    return this.c.bridge_root || BRIDGE_ROOT;
+  }
+
   async doctor() {
     return {
       bridge_api_version: BRIDGE_API_VERSION,
@@ -312,7 +316,7 @@ export class Bridge {
     if (this._workerCommit !== undefined) return this._workerCommit;
     try {
       const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], {
-        cwd: BRIDGE_ROOT,
+        cwd: this.bridgeRoot(),
         windowsHide: true,
         timeout: 2000,
         maxBuffer: 64 * 1024
@@ -339,7 +343,7 @@ export class Bridge {
     const createdAtMs = parseTimestampMs(cmd.created_at);
     const claimedAtMs = parseTimestampMs(cmd.claimed_at);
 
-    await appendCommandLog(BRIDGE_ROOT, {
+    await appendCommandLog(this.bridgeRoot(), {
       ts: new Date(finishedAtMs).toISOString(),
       command_id: cmd.id || null,
       operation: cmd.operation || null,
