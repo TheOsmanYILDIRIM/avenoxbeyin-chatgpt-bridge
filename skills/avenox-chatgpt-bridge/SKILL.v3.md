@@ -1,6 +1,6 @@
 ---
 name: avenox-chatgpt-bridge-v3
-description: ChatGPT Web ile Avenox Beyin arasındaki güncel Bridge API v3 sözleşmesi. Normal Supabase queue/result akışı, full-vault erişimi, kaynak bütünlüğü ve hata davranışlarını tanımlar.
+description: ChatGPT Web ile Avenox Beyin arasındaki güncel Bridge API v3 sözleşmesi. Normal Supabase queue/result akışı, turn-context hook mimarisi, full-vault erişimi, kaynak bütünlüğü ve finalization sözleşmesini tanımlar.
 ---
 
 # Avenox ChatGPT Bridge v3
@@ -11,7 +11,7 @@ Bu skill güncel ChatGPT ↔ Avenox Beyin çalışma sözleşmesidir.
 
 1. Bu `bridge_skill`
 2. Canlı `bridge_capabilities`
-3. `core_skill`
+3. `core_skill` ve canlı hook skill (`chatgpt-beyin-hook`)
 4. `skills_manifest`
 
 Operation veya payload tahmin etme. Canlı capability kataloğunu kullan.
@@ -20,12 +20,37 @@ Operation veya payload tahmin etme. Canlı capability kataloğunu kullan.
 
 Her yeni konuşmada ilk anlamlı Avenox/Beyin işi öncesinde `avenox_bootstrap` çalıştır. Basit sosyal sohbet için gerekmez.
 
-`avenox_bootstrap` sonucu canlı yetenekler, versiyon bilgisi ve skill kataloğuna ek olarak Supabase kaynaklı son 30 görevin kompakt kurtarma günlüğünü (`recent_task_journal`) içerir:
+`avenox_bootstrap` oturum açılışında bir kez çalıştırılır. Sonucu canlı yetenekler, versiyon bilgisi ve skill kataloğuna ek olarak Supabase kaynaklı son 30 görevin kompakt kurtarma günlüğünü (`recent_task_journal`) içerir:
 - **Kanonik Kaynak:** Supabase tek doğru kaynaktır; ChatGPT'nin ayrı bir oturum dosyası tutması gerekmez.
 - **Kompakt Üstveri:** Günlük ağır payload içermez; salt kompakt üstveri ve referansları (`id`, `idempotency_key`, `operation`, `status`, `target_ref`, `task_id`, `summary`, `source_refs`, `error_code`, `created_at`, `completed_at`) taşır.
 - **İdempotent Kurtarma:** Yeni oturumda veya kesintide önce `recent_task_journal`'ı incele.
 - `pending`, `claimed` veya `running` durumundaki mevcut işleri körlemesine baştan çalıştırma; var olan command ID üzerinden durumu izle.
 - Tamamlanmış işleri ve mutasyonları mükerrer çalıştırma; görev ve kaynak revizyonlarını doğrula.
+
+## Per-Turn Context Hook (`avenox_turn_context`)
+
+Bootstrap yapıldıktan sonra, her anlamlı Avenox/Beyin turunda assistant yanıtını üretmeden önce `avenox_turn_context` operasyonunu çağır.
+
+- **Hafif Siklet:** Tüm manifest veya core skill her tur yeniden çekilmez. `avenox_turn_context` yalnız `hook_skill` (`chatgpt-beyin-hook`), son 30 görev günlüğü ve kalıcılık/kurtarma ile ilgili canlı yetenek alt kümesini döner.
+- **Payload:** İsteğe bağlı `task` (görev adı) ve `project` (proje adı) alanlarını içerir. Ekstra alan ekleme.
+- **Basit Sohbet:** Selamlaşma, teşekkür veya genel diyaloglarda bu hook çağrılmaz.
+
+## Canlı Kuyruk Dönüşümü (Queue Mapping)
+
+ChatGPT ortamında shell veya `python3 beyin.py` çalıştırma desteği yoktur. Beyin komutları canlı kuyruk operasyonlarına dönüştürülür:
+- Arama/bağlam için `brain_context`
+- Görev oluşturma/güncelleme için `brain_task_create` ve `brain_task_update`
+- Not oluşturma için `brain_note_create`
+- Süreklilik ve vault dosyaları için `brain_vault_get` ve CAS korumalı `brain_vault_update`
+- İş kanıtı için `brain_receipt` (`harness: "chatgpt"`)
+- İndeks tazeleme için `brain_sync`
+
+## Zorunlu ve Seçici Finalization Sözleşmesi
+
+ChatGPT, kullanıcıya nihai yanıtını göndermeden **hemen önce** sonlandırma kontrolü yapar:
+1. Bu turda tamamlanan iş parçası, değişen görev, netleşen karar veya güncellenecek companion devir kartı (`Last-Session.md`, `Threads.md`, `Journal.md`, `Kurallar.md`) varsa, ilgili kuyruk mutasyonlarını (`brain_task_update`, `brain_vault_update`, `brain_note_create`, `brain_receipt`) çalıştır ve doğrula.
+2. Fikir fırtınası, salt okuma, genel açıklama veya kullanıcının no-memory isteği durumunda **asla kayıt yapma**.
+3. Çakışma durumunda güncel SHA-256 / revizyonu tekrar oku.
 
 ## Queue / result
 

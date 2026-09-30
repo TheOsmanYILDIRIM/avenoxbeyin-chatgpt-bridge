@@ -14,6 +14,13 @@ export const CAPABILITIES = [
     payload_schema: { type:'object', required:['name'], properties:{ name:{type:'string'} }, additionalProperties:false }
   },
   {
+    name: 'avenox_turn_context',
+    mode: 'read',
+    description: 'Lightweight per-turn context hook for ChatGPT turns. Returns the ChatGPT Brain hook skill, recent task journal, and persistence/recovery capability subset.',
+    maps_to: 'chatgpt-beyin-hook skill + Supabase task journal + live persistence capabilities',
+    payload_schema: { type:'object', properties:{ task:{type:'string'}, project:{type:'string'} }, additionalProperties:false }
+  },
+  {
     name: 'brain_context',
     mode: 'read',
     description: 'Search live Brain context with citations.',
@@ -134,7 +141,7 @@ export const CAPABILITIES = [
     maps_to: 'beyin.py receipt --file --harness',
     payload_schema: { type:'object', required:['event_id','summary','refs'], properties:{
       event_id:{type:'string'}, summary:{type:'string'}, refs:{type:'array',items:{type:'string'}},
-      session:{type:'string'}, harness:{enum:['codex','claude','antigravity','hermes','opencode','omp']}
+      session:{type:'string'}, harness:{enum:['codex','claude','antigravity','hermes','opencode','omp','chatgpt']}
     }, additionalProperties:false }
   },
   {

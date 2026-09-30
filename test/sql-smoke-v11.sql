@@ -58,6 +58,7 @@ $$;
 
 insert into public.brain_commands(operation,payload,requested_by)
 values
+  ('avenox_turn_context','{"task":"test-task","project":"test-proj"}'::jsonb,'sql-smoke-v11'),
   ('brain_vault_list','{}'::jsonb,'sql-smoke-v11'),
   ('brain_vault_find','{"query":"study"}'::jsonb,'sql-smoke-v11'),
   ('brain_vault_search','{"query":"study"}'::jsonb,'sql-smoke-v11'),

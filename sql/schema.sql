@@ -9,7 +9,7 @@ create table if not exists public.brain_commands (
   id uuid primary key default gen_random_uuid(),
   idempotency_key text unique not null default gen_random_uuid()::text,
   operation text not null check (operation in (
-    'avenox_bootstrap','avenox_skill_get',
+    'avenox_bootstrap','avenox_turn_context','avenox_skill_get',
     'brain_context','brain_source_get','brain_source_update',
     'brain_vault_list','brain_vault_find','brain_vault_search','brain_vault_read_range','brain_vault_get','brain_vault_update',
     'brain_note_create','brain_task_create','brain_task_update','brain_receipt',
@@ -36,7 +36,7 @@ create table if not exists public.brain_responses (
   response_text text not null,
   source_refs text[] not null default '{}',
   response_kind text not null
-    check (response_kind in ('context','doctor','mutation','bootstrap','skill','source')),
+    check (response_kind in ('context','doctor','mutation','bootstrap','skill','source','turn_context')),
   created_at timestamptz not null default now()
 );
 
@@ -406,6 +406,8 @@ begin
           then coalesce(c.payload->>'id', c.payload->>'source')
         when c.operation = 'brain_receipt'
           then c.payload->>'event_id'
+        when c.operation in ('avenox_bootstrap','avenox_turn_context')
+          then coalesce(c.payload->>'task', c.payload->>'project')
         when c.operation = 'avenox_skill_get'
           then c.payload->>'name'
         when c.operation = 'brain_context'
@@ -426,8 +428,8 @@ begin
           then coalesce(c.payload->>'summary', '')
         when c.operation = 'brain_context'
           then coalesce(c.payload->>'query', '')
-        when c.operation = 'avenox_bootstrap'
-          then coalesce(c.payload->>'task', '')
+        when c.operation in ('avenox_bootstrap','avenox_turn_context')
+          then coalesce(c.payload->>'task', c.payload->>'project', '')
         when c.operation in ('brain_task_create')
           then coalesce(c.payload->'metadata'->>'title', '')
         when c.operation in ('brain_task_update')

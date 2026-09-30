@@ -354,3 +354,135 @@ test('getRecentTaskJournal handles rpc error gracefully', async t => {
   assert.deepEqual(journal, []);
 });
 
+test('avenox_turn_context returns chatgpt-beyin-hook, recent journal and persistence capabilities subset only', async t => {
+  const { vault, bridge } = await fixture(t);
+  const mockJournal = [
+    {
+      id: 'c3333333-3333-3333-3333-333333333333',
+      idempotency_key: 'idem-3',
+      operation: 'brain_task_update',
+      status: 'completed',
+      target_ref: 'tasks/feature.md',
+      task_id: 'feature-task',
+      summary: 'active',
+      source_refs: ['notes/spec.md'],
+      response_kind: 'mutation',
+      error_code: null,
+      created_at: '2026-09-30T11:00:00Z',
+      completed_at: '2026-09-30T11:00:01Z'
+    }
+  ];
+
+  bridge.rpc = async (name, body) => {
+    if (name === 'get_recent_task_journal') {
+      assert.equal(body.p_limit, 30);
+      return mockJournal;
+    }
+    throw new Error(`unexpected rpc ${name}`);
+  };
+
+  const result = await bridge.turnContext({ task: 'fix login bug', project: 'auth-service' });
+  assert.equal(result.task, 'fix login bug');
+  assert.equal(result.project, 'auth-service');
+  assert.equal(result.hook_skill.name, 'chatgpt-beyin-hook');
+  assert.match(result.hook_skill.content, /chatgpt-beyin-hook/);
+  assert.deepEqual(result.recent_task_journal, mockJournal);
+
+  // Must NOT include full manifest or core skill
+  assert.equal(result.skills_manifest, undefined);
+  assert.equal(result.core_skill, undefined);
+  assert.equal(result.bridge_skill, undefined);
+
+  // Must include only persistence/recovery capabilities subset
+  const opNames = result.capabilities.map(c => c.name);
+  assert.ok(opNames.includes('brain_receipt'));
+  assert.ok(opNames.includes('brain_note_create'));
+  assert.ok(opNames.includes('brain_task_create'));
+  assert.ok(opNames.includes('brain_task_update'));
+  assert.ok(opNames.includes('brain_vault_get'));
+  assert.ok(opNames.includes('brain_vault_update'));
+  assert.ok(opNames.includes('brain_sync'));
+  assert.ok(opNames.includes('brain_companion_compact'));
+  assert.ok(opNames.includes('brain_source_get'));
+  assert.ok(opNames.includes('brain_source_update'));
+  assert.ok(opNames.includes('brain_history'));
+  assert.ok(opNames.includes('avenox_turn_context'));
+
+  // Must NOT include maintenance/update/admin operations not needed for turn persistence
+  assert.ok(!opNames.includes('avenox_bootstrap'));
+  assert.ok(!opNames.includes('brain_doctor'));
+  assert.ok(!opNames.includes('brain_update'));
+  assert.ok(!opNames.includes('brain_rollback'));
+  assert.ok(!opNames.includes('brain_recover'));
+  assert.ok(!opNames.includes('brain_preferences_update'));
+
+  // Test projection
+  const projection = bridge.project('avenox_turn_context', result);
+  assert.equal(projection.kind, 'turn_context');
+  assert.match(projection.text, /# Avenox Turn Context/);
+  assert.match(projection.text, /- Task: fix login bug/);
+  assert.match(projection.text, /- Project: auth-service/);
+  assert.match(projection.text, /## Hook Skill/);
+  assert.match(projection.text, /## Live Persistence Capabilities/);
+  assert.match(projection.text, /## Recent Task Journal/);
+  assert.match(projection.text, /- \[completed\] brain_task_update \(c3333333\) ref: tasks\/feature\.md - active/);
+});
+
+test('avenox_turn_context validates payload schema and rejects unknown fields', async t => {
+  const { bridge } = await fixture(t);
+  bridge.rpc = async () => [];
+
+  // Valid empty payload
+  const resEmpty = await bridge.turnContext({});
+  assert.equal(resEmpty.task, null);
+  assert.equal(resEmpty.project, null);
+
+  // Valid task only
+  const resTask = await bridge.turnContext({ task: 'some task' });
+  assert.equal(resTask.task, 'some task');
+  assert.equal(resTask.project, null);
+
+  // Rejects invalid task type
+  await assert.rejects(
+    () => bridge.turnContext({ task: 123 }),
+    /task required/
+  );
+
+  // Rejects invalid project type
+  await assert.rejects(
+    () => bridge.turnContext({ project: 123 }),
+    /project required/
+  );
+
+  // Rejects unsupported properties
+  await assert.rejects(
+    () => bridge.turnContext({ unknown_field: 'value' }),
+    /unsupported property: unknown_field/
+  );
+});
+
+test('brain_receipt accepts chatgpt as valid harness and rejects invalid harness', async t => {
+  const { bridge } = await fixture(t);
+
+  // chatgpt harness accepted
+  const res = await bridge.execute('brain_receipt', {
+    event_id: 'evt-chatgpt-1',
+    summary: 'Completed work item in ChatGPT',
+    refs: ['notes/item.md'],
+    harness: 'chatgpt'
+  });
+  assert.deepEqual(res, { status: 'ok' });
+
+  // Invalid harness rejected
+  await assert.rejects(
+    () => bridge.execute('brain_receipt', {
+      event_id: 'evt-chatgpt-2',
+      summary: 'Invalid harness test',
+      refs: ['notes/item.md'],
+      harness: 'unsupported_agent'
+    }),
+    /invalid receipt harness/
+  );
+});
+
+

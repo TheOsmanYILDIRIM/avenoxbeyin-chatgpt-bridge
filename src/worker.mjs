@@ -17,8 +17,22 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const BRIDGE_ROOT = resolve(HERE, '..');
 const BRIDGE_SKILL_PATH = resolve(BRIDGE_ROOT, 'skills', 'avenox-chatgpt-bridge', 'SKILL.v3.md');
 export const REQUIRED_TRANSPORT_SCHEMA = 11;
-const RECEIPT_HARNESSES = new Set(['codex','claude','antigravity','hermes','opencode','omp']);
+const RECEIPT_HARNESSES = new Set(['codex','claude','antigravity','hermes','opencode','omp','chatgpt']);
 const JEV_FEATURES = new Set(['context','review','answer','auto_context']);
+const PERSISTENCE_RECOVERY_OPERATIONS = new Set([
+  'brain_receipt',
+  'brain_note_create',
+  'brain_task_create',
+  'brain_task_update',
+  'brain_vault_get',
+  'brain_vault_update',
+  'brain_sync',
+  'brain_companion_compact',
+  'brain_source_get',
+  'brain_source_update',
+  'brain_history',
+  'avenox_turn_context'
+]);
 const REMOTE_PROTECTED_BASENAMES = new Set([
   'Core.md','Soul.md','Kurallar.md','Last-Session.md','Threads.md','Journal.md',
   'AGENTS.md','CLAUDE.md'
@@ -520,6 +534,9 @@ export class Bridge {
       case 'avenox_bootstrap':
         return this.bootstrap(payload.task || '');
 
+      case 'avenox_turn_context':
+        return this.turnContext(payload);
+
       case 'avenox_skill_get':
         return this.skillGet(payload.name);
 
@@ -607,6 +624,43 @@ export class Bridge {
       bridge_capabilities: await this.runtimeCapabilities(),
       core_skill: core,
       skills_manifest: manifest,
+      recent_task_journal: recentTaskJournal
+    };
+  }
+
+  async hookSkill() {
+    try {
+      return await this.skillGet('chatgpt-beyin-hook');
+    } catch {
+      const hookPath = resolve(this.bridgeRoot(), 'skills', 'chatgpt-beyin-hook', 'SKILL.md');
+      const content = await readFile(hookPath, 'utf8');
+      const description = (content.match(/^description:\s*(.+)$/m) || [])[1] || '';
+      return {
+        name: 'chatgpt-beyin-hook',
+        description,
+        sha256: sha(content),
+        content,
+        source: 'skills/chatgpt-beyin-hook/SKILL.md'
+      };
+    }
+  }
+
+  async turnContext(payload = {}) {
+    if (payload && typeof payload !== 'object') throw new Error('payload must be object');
+    const task = payload.task != null ? requiredString(payload.task, 'task') : null;
+    const project = payload.project != null ? requiredString(payload.project, 'project') : null;
+    for (const key of Object.keys(payload || {})) {
+      if (key !== 'task' && key !== 'project') throw new Error(`unsupported property: ${key}`);
+    }
+    const hookSkill = await this.hookSkill();
+    const allCaps = await this.runtimeCapabilities();
+    const persistenceCaps = allCaps.filter(c => PERSISTENCE_RECOVERY_OPERATIONS.has(c.name));
+    const recentTaskJournal = await this.getRecentTaskJournal(30);
+    return {
+      task,
+      project,
+      hook_skill: hookSkill,
+      capabilities: persistenceCaps,
       recent_task_journal: recentTaskJournal
     };
   }
@@ -1014,6 +1068,28 @@ export class Bridge {
           result.skills_manifest.map(
             s => `- **${s.name}** (${s.sha256.slice(0,12)}): ${s.description}`
           ).join('\n') + journalSection
+      };
+    }
+
+    if (op === 'avenox_turn_context') {
+      const journal = Array.isArray(result.recent_task_journal) ? result.recent_task_journal : [];
+      const journalSection = journal.length > 0
+        ? `\n\n## Recent Task Journal\n` + journal.map(
+            j => `- [${j.status}] ${j.operation} (${j.id ? j.id.slice(0, 8) : 'unknown'})${j.target_ref ? ` ref: ${j.target_ref}` : ''}${j.summary ? ` - ${j.summary}` : ''}`
+          ).join('\n')
+        : '';
+      return {
+        kind: 'turn_context',
+        refs: [result.hook_skill?.source].filter(Boolean),
+        text:
+          `# Avenox Turn Context\n` +
+          (result.task ? `- Task: ${result.task}\n` : '') +
+          (result.project ? `- Project: ${result.project}\n` : '') +
+          `- Recent Tasks: ${journal.length}\n` +
+          `- Persistence Capabilities: ${result.capabilities?.length || 0}\n\n` +
+          `## Hook Skill\n${result.hook_skill?.content || ''}\n\n` +
+          `## Live Persistence Capabilities\n${JSON.stringify(result.capabilities || [], null, 2)}` +
+          journalSection
       };
     }
 
