@@ -17,6 +17,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const BRIDGE_ROOT = resolve(HERE, '..');
 const BRIDGE_SKILL_PATH = resolve(BRIDGE_ROOT, 'skills', 'avenox-chatgpt-bridge', 'SKILL.v3.md');
 export const REQUIRED_TRANSPORT_SCHEMA = 11;
+export const DEFAULT_CHATGPT_HOOK_CADENCE = 4;
+export const CHATGPT_HOOK_DELIMITER = '\n\n---\n# CHATGPT BEYIN HOOK\n\n';
+
 const RECEIPT_HARNESSES = new Set(['codex','claude','antigravity','hermes','opencode','omp','chatgpt']);
 const JEV_FEATURES = new Set(['context','review','answer','auto_context']);
 const PERSISTENCE_RECOVERY_OPERATIONS = new Set([
@@ -38,14 +41,44 @@ const REMOTE_PROTECTED_BASENAMES = new Set([
   'AGENTS.md','CLAUDE.md'
 ]);
 
+const INELIGIBLE_HOOK_OPERATIONS = new Set([
+  'brain_sync',
+  'brain_skill_sync',
+  'brain_companion_compact',
+  'brain_doctor',
+  'brain_update_check',
+  'brain_update',
+  'brain_update_dismiss',
+  'brain_rollback',
+  'brain_recover',
+  'brain_jev_status',
+  'brain_jev_config',
+  'avenox_bootstrap',
+  'avenox_turn_context',
+  'avenox_turn_finalize'
+]);
+
+export function isEligibleChatGPTResponse(cmd, outcome) {
+  if (!cmd || !cmd.operation) return false;
+  if (outcome?.terminal_status !== 'completed') return false;
+  if (typeof outcome?.projection?.text !== 'string' || !outcome.projection.text.trim()) return false;
+  if (INELIGIBLE_HOOK_OPERATIONS.has(cmd.operation)) return false;
+  return true;
+}
+
 export class Bridge {
-  constructor(config) {
+  constructor(config = {}) {
     this.c = config;
     this.token = null;
     this._runtimeCapabilities = null;
     this._transportContract = null;
     this._workerCommit = undefined;
     this._brainVersion = undefined;
+    this.chatgptHookCadence = Number(
+      config?.chatgpt_hook_cadence ?? process.env.AVENOX_CHATGPT_HOOK_CADENCE ?? DEFAULT_CHATGPT_HOOK_CADENCE
+    );
+    this._hookCounter = 0;
+    this._hookCounterLoaded = false;
   }
 
   async auth() {
@@ -292,12 +325,35 @@ export class Bridge {
 
     let finishError = null;
     try {
+      let projection = outcome.projection || {};
+      if (this.chatgptHookCadence > 0 && isEligibleChatGPTResponse(cmd, outcome)) {
+        await this.loadHookCounter();
+        const nextCount = this._hookCounter + 1;
+        if (nextCount >= this.chatgptHookCadence) {
+          try {
+            const hook = await this.hookSkill();
+            if (hook?.content) {
+              const baseText = projection.text ?? '';
+              projection = {
+                ...projection,
+                text: `${baseText}${CHATGPT_HOOK_DELIMITER}${hook.content}`
+              };
+            }
+          } catch (e) {
+            console.error('[bridge-hook-injection]', e.message);
+          }
+          await this.saveHookCounter(0);
+        } else {
+          await this.saveHookCounter(nextCount);
+        }
+      }
+
       await this.finish(
         cmd,
         outcome.terminal_status,
         outcome.result,
         outcome.error,
-        outcome.projection
+        projection
       );
     } catch (error) {
       finishError = error;
@@ -309,6 +365,36 @@ export class Bridge {
         console.error('[bridge-telemetry]', error.message);
       }
     }
+  }
+
+  hookStatePath() {
+    return this.c.hook_state_path || resolve(this.bridgeRoot(), '.bridge-hook-state.json');
+  }
+
+  async loadHookCounter() {
+    if (this._hookCounterLoaded) return this._hookCounter;
+    try {
+      const raw = await readFile(this.hookStatePath(), 'utf8');
+      const data = JSON.parse(raw);
+      if (data && Number.isInteger(data.counter) && data.counter >= 0) {
+        this._hookCounter = data.counter;
+      }
+    } catch {
+      this._hookCounter = 0;
+    }
+    this._hookCounterLoaded = true;
+    return this._hookCounter;
+  }
+
+  async saveHookCounter(val) {
+    this._hookCounter = val;
+    this._hookCounterLoaded = true;
+    try {
+      await writeFile(this.hookStatePath(), JSON.stringify({ counter: val }), {
+        encoding: 'utf8',
+        mode: 0o600
+      });
+    } catch {}
   }
 
   async finish(cmd, status, result, error, p = {}) {
@@ -656,6 +742,7 @@ export class Bridge {
     const allCaps = await this.runtimeCapabilities();
     const persistenceCaps = allCaps.filter(c => PERSISTENCE_RECOVERY_OPERATIONS.has(c.name));
     const recentTaskJournal = await this.getRecentTaskJournal(30);
+
     return {
       task,
       project,

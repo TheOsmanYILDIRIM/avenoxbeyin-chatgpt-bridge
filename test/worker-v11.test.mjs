@@ -22,7 +22,8 @@ console.log(JSON.stringify({status:"ok"}));
     python: process.execPath,
     max_source_bytes: 262144,
     max_vault_file_bytes: 1048576,
-    poll_interval_ms: 5
+    poll_interval_ms: 5,
+    hook_state_path: join(vault, '.bridge-hook-state.json')
   });
   return { vault, bridge };
 }
@@ -484,5 +485,227 @@ test('brain_receipt accepts chatgpt as valid harness and rejects invalid harness
     /invalid receipt harness/
   );
 });
+
+test('periodic chatgpt hook injection appends hook every 4 eligible responses and resets cadence', async t => {
+  const { vault, bridge } = await fixture(t);
+  const hookSkill = await bridge.hookSkill();
+  assert.ok(hookSkill?.content?.length > 0);
+
+  const calls = [];
+  bridge.finish = async (cmd, status, result, error, projection) => {
+    calls.push({ cmd, status, result, error, projection });
+  };
+
+  const fileContent = '# Note\nsome content';
+  await writeFile(join(vault, 'Note.md'), fileContent);
+
+  // Response 1: eligible (brain_vault_get)
+  await bridge.handle({
+    id: 'cmd-1',
+    operation: 'brain_vault_get',
+    payload: { source: 'Note.md' }
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].status, 'completed');
+  assert.equal(calls[0].projection.text, fileContent);
+  assert.equal(calls[0].projection.text.includes('CHATGPT BEYIN HOOK'), false);
+
+  // Response 2: eligible (brain_receipt)
+  await bridge.handle({
+    id: 'cmd-2',
+    operation: 'brain_receipt',
+    payload: {
+      event_id: 'evt-2',
+      summary: 'Task completed',
+      refs: ['Note.md'],
+      harness: 'chatgpt'
+    }
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].status, 'completed');
+  assert.equal(calls[1].projection.text.includes('CHATGPT BEYIN HOOK'), false);
+
+  // Response 3: eligible (brain_vault_get)
+  await bridge.handle({
+    id: 'cmd-3',
+    operation: 'brain_vault_get',
+    payload: { source: 'Note.md' }
+  });
+  assert.equal(calls.length, 3);
+  assert.equal(calls[2].status, 'completed');
+  assert.equal(calls[2].projection.text.includes('CHATGPT BEYIN HOOK'), false);
+
+  // Response 4: eligible (brain_receipt) -> MUST INJECT HOOK
+  await bridge.handle({
+    id: 'cmd-4',
+    operation: 'brain_receipt',
+    payload: {
+      event_id: 'evt-4',
+      summary: 'Fourth response',
+      refs: ['Note.md'],
+      harness: 'chatgpt'
+    }
+  });
+  assert.equal(calls.length, 4);
+  assert.equal(calls[3].status, 'completed');
+  // Hook delimiter and managed content appended to projected response_text
+  assert.equal(calls[3].projection.text.includes('CHATGPT BEYIN HOOK'), true);
+  assert.equal(calls[3].projection.text.includes(hookSkill.content), true);
+  assert.ok(calls[3].projection.text.endsWith(hookSkill.content));
+  // Does NOT inject core Beyin skill
+  assert.equal(calls[3].projection.text.includes('Core brain skill'), false);
+  // Preserves result and refs semantics completely
+  assert.deepEqual(calls[3].result, { status: 'ok' });
+  assert.deepEqual(calls[3].projection.refs, []);
+
+  // Response 5: eligible (brain_vault_get) -> MUST RESET CADENCE (no injection)
+  await bridge.handle({
+    id: 'cmd-5',
+    operation: 'brain_vault_get',
+    payload: { source: 'Note.md' }
+  });
+  assert.equal(calls.length, 5);
+  assert.equal(calls[4].status, 'completed');
+  assert.equal(calls[4].projection.text, fileContent);
+  assert.equal(calls[4].projection.text.includes('CHATGPT BEYIN HOOK'), false);
+});
+
+test('only eligible ChatGPT responses count towards hook injection cadence', async t => {
+  const { vault, bridge } = await fixture(t);
+  const hookSkill = await bridge.hookSkill();
+
+  const calls = [];
+  bridge.finish = async (cmd, status, result, error, projection) => {
+    calls.push({ cmd, status, result, error, projection });
+  };
+
+  await writeFile(join(vault, 'Note.md'), '# Note\ncontent');
+
+  // Response 1 (eligible: count = 1)
+  await bridge.handle({
+    id: 'cmd-e1',
+    operation: 'brain_vault_get',
+    payload: { source: 'Note.md' }
+  });
+  assert.equal(calls.at(-1).projection.text.includes('CHATGPT BEYIN HOOK'), false);
+
+  // Response 2 (eligible: count = 2)
+  await bridge.handle({
+    id: 'cmd-e2',
+    operation: 'brain_vault_get',
+    payload: { source: 'Note.md' }
+  });
+  assert.equal(calls.at(-1).projection.text.includes('CHATGPT BEYIN HOOK'), false);
+
+  // Ineligible 1: maintenance sync
+  await bridge.handle({
+    id: 'cmd-m1',
+    operation: 'brain_sync',
+    payload: {}
+  });
+  assert.equal(calls.at(-1).projection.text.includes('CHATGPT BEYIN HOOK'), false);
+
+  // Ineligible 2: doctor diagnostic
+  await bridge.handle({
+    id: 'cmd-m2',
+    operation: 'brain_doctor',
+    payload: {}
+  });
+  assert.equal(calls.at(-1).projection.text.includes('CHATGPT BEYIN HOOK'), false);
+
+  // Ineligible 3: failed operation
+  await bridge.handle({
+    id: 'cmd-f1',
+    operation: 'invalid_op_test',
+    payload: {}
+  });
+  assert.equal(calls.at(-1).status, 'failed');
+  assert.equal((calls.at(-1).projection?.text || '').includes('CHATGPT BEYIN HOOK'), false);
+
+  // Response 3 (eligible: count = 3)
+  await bridge.handle({
+    id: 'cmd-e3',
+    operation: 'brain_vault_get',
+    payload: { source: 'Note.md' }
+  });
+  assert.equal(calls.at(-1).projection.text.includes('CHATGPT BEYIN HOOK'), false);
+
+  // Response 4 (eligible: count = 4) -> INJECTS!
+  await bridge.handle({
+    id: 'cmd-e4',
+    operation: 'brain_receipt',
+    payload: {
+      event_id: 'evt-e4',
+      summary: 'Fourth eligible response',
+      refs: ['Note.md'],
+      harness: 'chatgpt'
+    }
+  });
+  assert.equal(calls.at(-1).projection.text.includes('CHATGPT BEYIN HOOK'), true);
+  assert.equal(calls.at(-1).projection.text.includes(hookSkill.content), true);
+  assert.deepEqual(calls.at(-1).result, { status: 'ok' });
+});
+
+test('cadence is configurable and counter persists across bridge instances', async t => {
+  const { vault } = await fixture(t);
+  await writeFile(join(vault, 'Note.md'), '# Note\ncontent');
+  const hookStatePath = join(vault, '.bridge-hook-state.json');
+
+  // Custom cadence = 2
+  const bridge1 = new Bridge({
+    vault_root: vault,
+    python: process.execPath,
+    chatgpt_hook_cadence: 2,
+    hook_state_path: hookStatePath
+  });
+
+  const calls1 = [];
+  bridge1.finish = async (cmd, status, result, error, projection) => {
+    calls1.push({ cmd, status, result, error, projection });
+  };
+
+  // Response 1 on bridge1 (count = 1, no injection)
+  await bridge1.handle({
+    id: 'b1-cmd-1',
+    operation: 'brain_vault_get',
+    payload: { source: 'Note.md' }
+  });
+  assert.equal(calls1.length, 1);
+  assert.equal(calls1[0].projection.text.includes('CHATGPT BEYIN HOOK'), false);
+
+  // Simulate worker restart: new Bridge instance pointing to same root and hook_state_path
+  const bridge2 = new Bridge({
+    vault_root: vault,
+    python: process.execPath,
+    chatgpt_hook_cadence: 2,
+    hook_state_path: hookStatePath
+  });
+
+  const calls2 = [];
+  bridge2.finish = async (cmd, status, result, error, projection) => {
+    calls2.push({ cmd, status, result, error, projection });
+  };
+
+  // Response 2 on bridge2 (count was 1, now 2 -> INJECTS!)
+  await bridge2.handle({
+    id: 'b2-cmd-2',
+    operation: 'brain_vault_get',
+    payload: { source: 'Note.md' }
+  });
+  assert.equal(calls2.length, 1);
+  assert.equal(calls2[0].projection.text.includes('CHATGPT BEYIN HOOK'), true);
+});
+
+test('local beyin CLI and runtime scripts support chatgpt harness end-to-end', async () => {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const execFileAsync = promisify(execFile);
+  const cliScript = '/data/data/com.termux/files/home/vault/.claude/scripts/beyin_v3_cli.py';
+
+  // Test CLI help shows chatgpt in harness choices
+  const { stdout } = await execFileAsync('python3', [cliScript, 'receipt', '--help']);
+  assert.match(stdout, /chatgpt/);
+});
+
 
 
