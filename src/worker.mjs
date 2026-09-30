@@ -571,6 +571,16 @@ export class Bridge {
     };
   }
 
+  async getRecentTaskJournal(limit = 30) {
+    try {
+      const journal = await this.rpc('get_recent_task_journal', {
+        p_limit: intInRange(limit, 1, 100, 'limit')
+      });
+      if (Array.isArray(journal)) return journal;
+    } catch {}
+    return [];
+  }
+
   async bootstrap(task) {
     const root = this.skillRoot();
     const names = (await readdir(root, { withFileTypes: true }))
@@ -588,6 +598,7 @@ export class Bridge {
     try {
       version = (await readFile(resolve(this.c.vault_root, '.beyin-version'), 'utf8')).trim();
     } catch {}
+    const recentTaskJournal = await this.getRecentTaskJournal(30);
     return {
       task,
       brain_version: version,
@@ -595,7 +606,8 @@ export class Bridge {
       bridge_skill: bridgeSkill,
       bridge_capabilities: await this.runtimeCapabilities(),
       core_skill: core,
-      skills_manifest: manifest
+      skills_manifest: manifest,
+      recent_task_journal: recentTaskJournal
     };
   }
 
@@ -985,17 +997,23 @@ export class Bridge {
     }
 
     if (op === 'avenox_bootstrap') {
+      const journal = Array.isArray(result.recent_task_journal) ? result.recent_task_journal : [];
+      const journalSection = journal.length > 0
+        ? `\n\n## Recent Task Journal\n` + journal.map(
+            j => `- [${j.status}] ${j.operation} (${j.id ? j.id.slice(0, 8) : 'unknown'})${j.target_ref ? ` ref: ${j.target_ref}` : ''}${j.summary ? ` - ${j.summary}` : ''}`
+          ).join('\n')
+        : '';
       return {
         kind: 'bootstrap',
         refs: [result.bridge_skill.source, result.core_skill.source],
         text:
-          `# Avenox Bootstrap\n- Brain: ${result.brain_version}\n- Bridge API: ${result.bridge_api_version}\n- Skills: ${result.skills_manifest.length}\n\n` +
+          `# Avenox Bootstrap\n- Brain: ${result.brain_version}\n- Bridge API: ${result.bridge_api_version}\n- Skills: ${result.skills_manifest.length}\n- Recent Tasks: ${journal.length}\n\n` +
           `## Bridge Skill\n${result.bridge_skill.content}\n\n` +
           `## Bridge Capabilities\n${JSON.stringify(result.bridge_capabilities, null, 2)}\n\n` +
           `## Core Skill\n${result.core_skill.content}\n\n## Skills Manifest\n` +
           result.skills_manifest.map(
             s => `- **${s.name}** (${s.sha256.slice(0,12)}): ${s.description}`
-          ).join('\n')
+          ).join('\n') + journalSection
       };
     }
 

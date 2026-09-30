@@ -6,7 +6,14 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { Bridge } from '../src/worker.mjs';
 
-async function fixture(t, script = 'console.log(JSON.stringify({status:"ok"}))') {
+async function fixture(t, script = `
+const args = process.argv.slice(2);
+if (args[0] === '-h') {
+  console.log('usage: beyin.py {context,note-create,task-create,task-update,receipt,sync,history,skill-sync,companion-compact,preferences,doctor,update,rollback,recover,jev,jev-memory}');
+  process.exit(0);
+}
+console.log(JSON.stringify({status:"ok"}));
+`) {
   const vault = await mkdtemp(join(tmpdir(), 'avenox-bridge-v11-test-'));
   t.after(() => rm(vault, { recursive:true, force:true }));
   await writeFile(join(vault, 'beyin.py'), script, 'utf8');
@@ -279,4 +286,71 @@ test('bootstrap uses simplified v3 bridge skill and contains no pairing requirem
   assert.match(result.bridge_skill.content, /## Full vault/);
   assert.equal('secure_transport' in result, false);
   assert.doesNotMatch(result.bridge_skill.content, /AVX3\./);
+  assert.deepEqual(result.recent_task_journal, []);
 });
+
+test('bootstrap includes recent_task_journal from Supabase and projects it into text', async t => {
+  const { vault, bridge } = await fixture(t);
+  const coreDir = join(vault, '.agents', 'skills', 'beyin');
+  await mkdir(coreDir, { recursive:true });
+  await writeFile(join(coreDir, 'SKILL.md'), '---\nname: beyin\ndescription: Core brain skill\n---\n# Core\n');
+  await writeFile(join(vault, '.beyin-version'), '3.4.0\n');
+  bridge.runtimeCapabilities = async () => [];
+
+  const mockJournal = [
+    {
+      id: 'c1111111-1111-1111-1111-111111111111',
+      idempotency_key: 'idem-1',
+      operation: 'brain_task_update',
+      status: 'completed',
+      target_ref: 'tasks/study.md',
+      task_id: 'study-task',
+      summary: 'done',
+      source_refs: ['notes/summary.md'],
+      response_kind: 'mutation',
+      error_code: null,
+      created_at: '2026-09-30T10:00:00Z',
+      completed_at: '2026-09-30T10:00:01Z'
+    },
+    {
+      id: 'c2222222-2222-2222-2222-222222222222',
+      idempotency_key: 'idem-2',
+      operation: 'brain_receipt',
+      status: 'completed',
+      target_ref: 'evt-123',
+      task_id: 'evt-123',
+      summary: 'Refactored module',
+      source_refs: ['notes/refactor.md'],
+      response_kind: 'mutation',
+      error_code: null,
+      created_at: '2026-09-30T09:00:00Z',
+      completed_at: '2026-09-30T09:00:01Z'
+    }
+  ];
+
+  bridge.rpc = async (name, body) => {
+    if (name === 'get_recent_task_journal') {
+      assert.equal(body.p_limit, 30);
+      return mockJournal;
+    }
+    throw new Error(`unexpected rpc ${name}`);
+  };
+
+  const result = await bridge.bootstrap('test recovery');
+  assert.deepEqual(result.recent_task_journal, mockJournal);
+
+  const projection = bridge.project('avenox_bootstrap', result);
+  assert.equal(projection.kind, 'bootstrap');
+  assert.match(projection.text, /## Recent Task Journal/);
+  assert.match(projection.text, /- \[completed\] brain_task_update \(c1111111\) ref: tasks\/study\.md - done/);
+  assert.match(projection.text, /- \[completed\] brain_receipt \(c2222222\) ref: evt-123 - Refactored module/);
+  assert.match(projection.text, /- Recent Tasks: 2/);
+});
+
+test('getRecentTaskJournal handles rpc error gracefully', async t => {
+  const { bridge } = await fixture(t);
+  bridge.rpc = async () => { throw new Error('rpc failed'); };
+  const journal = await bridge.getRecentTaskJournal(30);
+  assert.deepEqual(journal, []);
+});
+

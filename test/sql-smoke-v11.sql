@@ -49,6 +49,10 @@ begin
   if to_regprocedure('public.finish_brain_command_v2(jsonb)') is null then
     raise exception 'missing finish_brain_command_v2(jsonb)';
   end if;
+
+  if to_regprocedure('public.get_recent_task_journal(integer)') is null then
+    raise exception 'missing get_recent_task_journal(integer)';
+  end if;
 end
 $$;
 

@@ -2,8 +2,8 @@ export const CAPABILITIES = [
   {
     name: 'avenox_bootstrap',
     mode: 'read',
-    description: 'Return the current Bridge skill, capability catalog, Avenox core skill, version and skill manifest.',
-    maps_to: 'versioned Bridge skill + local Avenox skill files + .beyin-version',
+    description: 'Return the current Bridge skill, capability catalog, Avenox core skill, version, skill manifest and compact recent task recovery journal.',
+    maps_to: 'versioned Bridge skill + local Avenox skill files + .beyin-version + Supabase task journal',
     payload_schema: { type:'object', properties:{ task:{type:'string'} }, additionalProperties:false }
   },
   {

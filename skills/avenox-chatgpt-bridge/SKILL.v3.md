@@ -16,9 +16,16 @@ Bu skill güncel ChatGPT ↔ Avenox Beyin çalışma sözleşmesidir.
 
 Operation veya payload tahmin etme. Canlı capability kataloğunu kullan.
 
-## Bootstrap
+## Bootstrap ve Görev Kurtarma Günlüğü
 
 Her yeni konuşmada ilk anlamlı Avenox/Beyin işi öncesinde `avenox_bootstrap` çalıştır. Basit sosyal sohbet için gerekmez.
+
+`avenox_bootstrap` sonucu canlı yetenekler, versiyon bilgisi ve skill kataloğuna ek olarak Supabase kaynaklı son 30 görevin kompakt kurtarma günlüğünü (`recent_task_journal`) içerir:
+- **Kanonik Kaynak:** Supabase tek doğru kaynaktır; ChatGPT'nin ayrı bir oturum dosyası tutması gerekmez.
+- **Kompakt Üstveri:** Günlük ağır payload içermez; salt kompakt üstveri ve referansları (`id`, `idempotency_key`, `operation`, `status`, `target_ref`, `task_id`, `summary`, `source_refs`, `error_code`, `created_at`, `completed_at`) taşır.
+- **İdempotent Kurtarma:** Yeni oturumda veya kesintide önce `recent_task_journal`'ı incele.
+- `pending`, `claimed` veya `running` durumundaki mevcut işleri körlemesine baştan çalıştırma; var olan command ID üzerinden durumu izle.
+- Tamamlanmış işleri ve mutasyonları mükerrer çalıştırma; görev ve kaynak revizyonlarını doğrula.
 
 ## Queue / result
 
