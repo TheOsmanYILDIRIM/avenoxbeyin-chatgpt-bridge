@@ -16,9 +16,26 @@ export const CAPABILITIES = [
   {
     name: 'avenox_turn_context',
     mode: 'read',
-    description: 'Lightweight per-turn context hook for ChatGPT turns. Returns the ChatGPT Brain hook skill, recent task journal, and persistence/recovery capability subset.',
-    maps_to: 'chatgpt-beyin-hook skill + Supabase task journal + live persistence capabilities',
-    payload_schema: { type:'object', properties:{ task:{type:'string'}, project:{type:'string'} }, additionalProperties:false }
+    description: 'Lightweight per-turn context hook for ChatGPT turns. Opens a tracked turn in Supabase, checks for unfinalized previous turns, and returns the hook skill, recent task journal, and persistence capabilities.',
+    maps_to: 'chatgpt-beyin-hook skill + Supabase chatgpt_turns + Supabase task journal + live persistence capabilities',
+    payload_schema: { type:'object', properties:{ task:{type:'string'}, project:{type:'string'}, turn_id:{type:'string'} }, additionalProperties:false }
+  },
+  {
+    name: 'avenox_turn_finalize',
+    mode: 'write',
+    description: 'Validate and record completion of a ChatGPT turn in Supabase after persisting any state changes.',
+    maps_to: 'Supabase finalize_chatgpt_turn RPC',
+    payload_schema: {
+      type: 'object',
+      required: ['turn_id', 'state_changed', 'summary', 'refs'],
+      properties: {
+        turn_id: { type: 'string' },
+        state_changed: { type: 'boolean' },
+        summary: { type: 'string' },
+        refs: { type: 'array', items: { type: 'string' } }
+      },
+      additionalProperties: false
+    }
   },
   {
     name: 'brain_context',

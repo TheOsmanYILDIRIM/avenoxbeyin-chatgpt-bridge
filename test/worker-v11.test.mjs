@@ -707,5 +707,170 @@ test('local beyin CLI and runtime scripts support chatgpt harness end-to-end', a
   assert.match(stdout, /chatgpt/);
 });
 
+test('avenox_turn_context opens turn record, returns turn_id, and includes finalization reminder', async t => {
+  const { bridge } = await fixture(t);
+  let openRpcCalled = false;
+  bridge.rpc = async (method, params) => {
+    if (method === 'open_chatgpt_turn') {
+      openRpcCalled = true;
+      return {
+        turn_id: params.p_turn_id || 'generated-turn-id',
+        previous_unfinalized_turn: null
+      };
+    }
+    return [];
+  };
 
+  const res = await bridge.turnContext({ task: 'audit auth flow', project: 'avenox' });
+  assert.equal(openRpcCalled, true);
+  assert.ok(res.turn_id);
+  assert.equal(res.previous_unfinalized_turn, null);
+  assert.equal(res.task, 'audit auth flow');
+  assert.equal(res.project, 'avenox');
 
+  const proj = bridge.project('avenox_turn_context', res);
+  assert.equal(proj.kind, 'turn_context');
+  assert.match(proj.text, /Turn ID: /);
+  assert.match(proj.text, /FINALIZATION GUARD/);
+  assert.match(proj.text, /avenox_turn_finalize/);
+});
+
+test('avenox_turn_finalize validates state_changed=true requires non-empty refs', async t => {
+  const { bridge } = await fixture(t);
+
+  // Reject empty refs when state_changed is true
+  await assert.rejects(
+    () => bridge.turnFinalize({
+      turn_id: 'turn-123',
+      state_changed: true,
+      summary: 'Updated memory files',
+      refs: []
+    }),
+    error => error?.code === 'validation_error' && error.message.includes('refs')
+  );
+
+  // Reject whitespace-only refs
+  await assert.rejects(
+    () => bridge.turnFinalize({
+      turn_id: 'turn-123',
+      state_changed: true,
+      summary: 'Updated memory files',
+      refs: ['  ', '']
+    }),
+    error => error?.code === 'validation_error'
+  );
+
+  // Accept valid refs when state_changed is true
+  let finalizeParams = null;
+  bridge.rpc = async (method, params) => {
+    if (method === 'finalize_chatgpt_turn') {
+      finalizeParams = params;
+      return { status: 'finalized', turn_id: params.p_turn_id, idempotent: false };
+    }
+    return {};
+  };
+
+  const valid = await bridge.turnFinalize({
+    turn_id: 'turn-123',
+    state_changed: true,
+    summary: 'Updated Last-Session.md',
+    refs: ['Last-Session.md']
+  });
+  assert.equal(valid.status, 'finalized');
+  assert.equal(valid.turn_id, 'turn-123');
+  assert.equal(valid.state_changed, true);
+  assert.deepEqual(valid.refs, ['Last-Session.md']);
+  assert.equal(finalizeParams.p_turn_id, 'turn-123');
+  assert.equal(finalizeParams.p_state_changed, true);
+  assert.deepEqual(finalizeParams.p_refs, ['Last-Session.md']);
+
+  const proj = bridge.project('avenox_turn_finalize', valid);
+  assert.equal(proj.kind, 'turn_finalize');
+  assert.match(proj.text, /Turn turn-123 finalized/);
+});
+
+test('avenox_turn_finalize succeeds with state_changed=false and empty refs', async t => {
+  const { bridge } = await fixture(t);
+  let finalizeParams = null;
+  bridge.rpc = async (method, params) => {
+    if (method === 'finalize_chatgpt_turn') {
+      finalizeParams = params;
+      return { status: 'finalized', turn_id: params.p_turn_id, idempotent: false };
+    }
+    return {};
+  };
+
+  const res = await bridge.turnFinalize({
+    turn_id: 'turn-ro-1',
+    state_changed: false,
+    summary: 'Answered user question about codebase structure without state changes',
+    refs: []
+  });
+  assert.equal(res.status, 'finalized');
+  assert.equal(res.turn_id, 'turn-ro-1');
+  assert.equal(res.state_changed, false);
+  assert.deepEqual(res.refs, []);
+  assert.equal(finalizeParams.p_state_changed, false);
+  assert.deepEqual(finalizeParams.p_refs, []);
+});
+
+test('avenox_turn_context surfaces previous unfinalized turn as warning', async t => {
+  const { bridge } = await fixture(t);
+  bridge.rpc = async (method, params) => {
+    if (method === 'open_chatgpt_turn') {
+      return {
+        turn_id: 'turn-new-2',
+        previous_unfinalized_turn: {
+          turn_id: 'turn-old-1',
+          task: 'refactor tokenizer',
+          created_at: '2026-09-30T12:00:00Z'
+        }
+      };
+    }
+    return [];
+  };
+
+  const res = await bridge.turnContext({ task: 'continue work' });
+  assert.equal(res.turn_id, 'turn-new-2');
+  assert.ok(res.previous_unfinalized_turn);
+  assert.equal(res.previous_unfinalized_turn.turn_id, 'turn-old-1');
+
+  const proj = bridge.project('avenox_turn_context', res);
+  assert.match(proj.text, /WARNING: UNFINALIZED PREVIOUS TURN DETECTED/);
+  assert.match(proj.text, /turn-old-1/);
+  assert.match(proj.text, /refactor tokenizer/);
+});
+
+test('duplicate finalize calls are idempotent', async t => {
+  const { bridge } = await fixture(t);
+  let callCount = 0;
+  bridge.rpc = async (method, params) => {
+    if (method === 'finalize_chatgpt_turn') {
+      callCount++;
+      return {
+        status: 'finalized',
+        turn_id: params.p_turn_id,
+        idempotent: callCount > 1
+      };
+    }
+    return {};
+  };
+
+  const first = await bridge.turnFinalize({
+    turn_id: 'turn-idem-1',
+    state_changed: false,
+    summary: 'Done',
+    refs: []
+  });
+  assert.equal(first.status, 'finalized');
+  assert.equal(first.idempotent, false);
+
+  const second = await bridge.turnFinalize({
+    turn_id: 'turn-idem-1',
+    state_changed: false,
+    summary: 'Done again',
+    refs: []
+  });
+  assert.equal(second.status, 'finalized');
+  assert.equal(second.idempotent, true);
+});

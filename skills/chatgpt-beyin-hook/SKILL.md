@@ -59,6 +59,34 @@ ChatGPT hangi durumlarda Beyin'e kayıt yapacağını ve hangi durumlarda **kesi
 
 ---
 
+## İki Aşamalı Tur Yaşam Döngüsü (Two-Phase Turn Lifecycle)
+
+Her anlamlı Avenox Beyin turu iki aşamalı (two-phase) olarak yürütülür:
+
+### Faz 1: Başlangıç (Turn Context)
+1. Anlamlı turlarda ilk adım olarak `avenox_turn_context` çağrılır (`{"task": "...", "project": "..."}`).
+2. Bu çağrı Supabase üzerinde açık bir tur (`chatgpt_turns`) kaydı oluşturur ve benzersiz bir `turn_id` döner.
+3. Eğer önceki bir tur sonlandırılmadan açık kalmışsa (`previous_unfinalized_turn`), güçlü bir uyarı (`WARNING: UNFINALIZED PREVIOUS TURN`) döner. Bu durumda önceki turun hafıza/receipt kayıtlarının tamamlandığından emin olun veya gerekirse toparlayın.
+4. Yanıtın sonundaki **FINALIZATION GUARD** hatırlatıcısına dikkat edin.
+
+### Faz 2: Sonlandırma (Turn Finalize)
+Kullanıcıya nihai yanıt verilmeden **hemen önce**, `avenox_turn_finalize` operasyonu çağrılmalıdır:
+
+```json
+{
+  "turn_id": "<turn_id>",
+  "state_changed": true,
+  "summary": "Last-Session.md ve Threads.md güncellendi, receipt oluşturuldu.",
+  "refs": ["Last-Session.md", "Threads.md"]
+}
+```
+
+- **`state_changed: true`**: Tur sırasında bir not, görev, companion dosyası (`Last-Session.md`, `Threads.md`, `Journal.md`, `Kurallar.md`) veya `brain_receipt` yazıldıysa `true` yapılmalı ve güncellenen/yazılan dosyalar `refs` dizisinde **en az bir kaynak ile** listelenmelidir (boş liste reddedilir).
+- **`state_changed: false`**: Tur salt okuma, arama veya genel yanıt amaçlıysa ve hiçbir hafıza/durum yazımı gerekmediyse `false` yapılmalı ve `refs: []` boş dizi olarak geçilmelidir.
+- `avenox_turn_finalize` çağrısı idempotenttir; aynı tur için tekrar çağrılsa bile güvenle tamamlanır.
+
+---
+
 ## Zorunlu ve Seçici Finalization Sözleşmesi (Finalization Contract)
 
 ChatGPT, her anlamlı Avenox turunda kullanıcıya nihai yanıtını göndermeden **hemen önce** şu sonlandırma kontrolünü zorunlu olarak gerçekleştirir:
@@ -70,7 +98,8 @@ ChatGPT, her anlamlı Avenox turunda kullanıcıya nihai yanıtını göndermede
    - Görev güncellemeleri için `brain_task_update` kullan (görev dosyalarını asla vault_update ile doğrudan yazma).
    - Tamamlanan iş parçası için `brain_receipt` (harness: "chatgpt") kaydı oluştur.
    - Kuyruk operasyonlarının `completed` sonucunu doğrula.
+   - **`avenox_turn_finalize`** çağrısını `state_changed: true` ve `refs: ["..."]` ile gerçekleştir.
 3. **Kalıcılık Gerekmiyorsa:**
-   - Herhangi bir yazma operasyonu tetiklemeden sessizce son yanıt metnine geç.
+   - **`avenox_turn_finalize`** çağrısını `state_changed: false` ve `refs: []` ile gerçekleştir.
 4. **Çakışma (`conflict`) Yönetimi:**
    - `brain_vault_update` veya `brain_task_update` conflict hatası dönerse, güncel içeriği/revizyonu tekrar oku ve değişikliği güncel durum üzerine uygulayarak yeniden dene.

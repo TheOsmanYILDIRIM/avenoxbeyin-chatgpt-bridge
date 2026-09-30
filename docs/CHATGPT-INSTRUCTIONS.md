@@ -8,7 +8,9 @@
 
 ## 2. Her Tur Öncesi Bağlam (Per-Turn Hook)
 - Bootstrap sonrasında, Avenox/Beyin ile ilgili **her anlamlı assistant yanıtından önce** `avenox_turn_context` operasyonunu çalıştır (varsa `task` ve/veya `project` parametrelerini ilet).
-- `avenox_turn_context` tarafından dönen `hook_skill` (`chatgpt-beyin-hook`), `recent_task_journal` ve kalıcılık yeteneklerini (`capabilities`) o turun canlı eylem ve süreklilik rehberi olarak kullan.
+- `avenox_turn_context` açık bir tur kaydı (`chatgpt_turns`) oluşturur ve `turn_id` döner.
+- Çıktıda önceki tur kapatılmamış uyarısı (`WARNING: UNFINALIZED PREVIOUS TURN`) varsa, önceki turun eksik kayıtlarını tamamla/kurtar.
+- Dönen `hook_skill` (`chatgpt-beyin-hook`), `recent_task_journal` ve kalıcılık yeteneklerini (`capabilities`) o turun canlı eylem ve süreklilik rehberi olarak kullan.
 - Basit selamlaşma, sosyal sohbet veya Beyin dışı genel sorularda `avenox_turn_context` çağrılmaz.
 
 ## 3. Shell Komutlarını Canlı Kuyruğa Dönüştürme
@@ -20,9 +22,9 @@
 - Durum `pending`, `claimed` veya `running` ise aynı assistant turunda yeniden kontrol et; kullanıcıdan “devam et” isteme ve aynı işi yeni command oluşturarak tekrar başlatma.
 - `completed`, `failed` ve `conflict` terminal durumlardır.
 
-## 5. Zorunlu ve Seçici Finalization Kontrolü
-- Her anlamlı turda kullanıcıya son yanıtı göndermeden **hemen önce** finalization kontrolü yap:
-  - **Kayıt Yapılacak Durumlar:** Tamamlanan iş parçası, değişen görev durumu (`brain_task_update`), yeni görev (`brain_task_create`), kalıcı mimari/kavramsal karar (`brain_note_create`), companion süreklilik kartı (`Last-Session.md`, `Threads.md`, `Journal.md`, `Kurallar.md` via `brain_vault_update`), veya iş kanıtı (`brain_receipt` with `harness: "chatgpt"`).
-  - **Kayıt Yapılmayacak Durumlar:** Fikir fırtınası (brainstorming), henüz netleşmemiş taslaklar, genel soru-cevap, salt okuma turları veya kullanıcının açık "no-memory" / "kaydetme" talepleri.
-- Kalıcılık gerekmiyorsa sessizce yanıtı ilet; gereksiz yazma yapma.
+## 5. İki Aşamalı Tur ve Zorunlu Finalization Guard (`avenox_turn_finalize`)
+- Her anlamlı turda kullanıcıya nihai yanıtı göndermeden **hemen önce** zorunlu olarak `avenox_turn_finalize` operasyonunu çağır:
+  - **Durum Değişikliği / Kalıcılık Yapıldıysa (`state_changed: true`):** Tamamlanan iş parçası, değişen görev durumu (`brain_task_update`), yeni görev (`brain_task_create`), kalıcı mimari/kavramsal karar (`brain_note_create`), companion süreklilik kartı (`Last-Session.md`, `Threads.md`, `Journal.md`, `Kurallar.md` via `brain_vault_update`), veya iş kanıtı (`brain_receipt` with `harness: "chatgpt"`) yazıldıysa `state_changed: true` ve `refs: ["Last-Session.md", ...]` (en az bir geçerli kaynak) ile sonlandır.
+  - **Kalıcılık Yapılmadıysa (`state_changed: false`):** Fikir fırtınası, genel soru-cevap, salt okuma turları veya kullanıcının açık "no-memory" / "kaydetme" taleplerinde hiçbir yazma yapma; `state_changed: false` ve `refs: []` ile sonlandır.
+- `avenox_turn_finalize` çalıştırılmadan ve başarılı (`status: "finalized"`) olmadan kullanıcıya nihai yanıtı gönderme.
 - Operation adı, payload alanı veya transport davranışı tahmin etme. Canlı sözleşmede bilgi yoksa uydurma.

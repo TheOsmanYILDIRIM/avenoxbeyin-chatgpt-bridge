@@ -9,7 +9,7 @@ create table if not exists public.brain_commands (
   id uuid primary key default gen_random_uuid(),
   idempotency_key text unique not null default gen_random_uuid()::text,
   operation text not null check (operation in (
-    'avenox_bootstrap','avenox_turn_context','avenox_skill_get',
+    'avenox_bootstrap','avenox_turn_context','avenox_turn_finalize','avenox_skill_get',
     'brain_context','brain_source_get','brain_source_update',
     'brain_vault_list','brain_vault_find','brain_vault_search','brain_vault_read_range','brain_vault_get','brain_vault_update',
     'brain_note_create','brain_task_create','brain_task_update','brain_receipt',
@@ -36,7 +36,7 @@ create table if not exists public.brain_responses (
   response_text text not null,
   source_refs text[] not null default '{}',
   response_kind text not null
-    check (response_kind in ('context','doctor','mutation','bootstrap','skill','source','turn_context')),
+    check (response_kind in ('context','doctor','mutation','bootstrap','skill','source','turn_context','turn_finalize')),
   created_at timestamptz not null default now()
 );
 
@@ -457,3 +457,153 @@ grant execute on function public.bridge_transport_contract() to authenticated;
 grant execute on function public.claim_next_brain_command_v2() to authenticated;
 grant execute on function public.finish_brain_command_v2(jsonb) to authenticated;
 grant execute on function public.get_recent_task_journal(integer) to authenticated;
+
+create table if not exists public.chatgpt_turns (
+  id text primary key,
+  user_id uuid not null references auth.users(id) on delete cascade default auth.uid(),
+  task text,
+  project text,
+  status text not null check (status in ('open', 'finalized', 'abandoned')) default 'open',
+  state_changed boolean,
+  summary text,
+  refs text[] default '{}',
+  created_at timestamptz not null default now(),
+  finalized_at timestamptz
+);
+
+create index if not exists idx_chatgpt_turns_user_status_created 
+  on public.chatgpt_turns(user_id, status, created_at desc);
+
+create index if not exists idx_chatgpt_turns_user_created 
+  on public.chatgpt_turns(user_id, created_at desc);
+
+alter table public.chatgpt_turns enable row level security;
+
+create policy "chatgpt_turns_select_own" on public.chatgpt_turns
+  for select using (auth.uid() = user_id);
+
+create policy "chatgpt_turns_insert_own" on public.chatgpt_turns
+  for insert with check (auth.uid() = user_id);
+
+create policy "chatgpt_turns_update_own" on public.chatgpt_turns
+  for update using (auth.uid() = user_id);
+
+create or replace function public.open_chatgpt_turn(
+  p_task text default null,
+  p_project text default null,
+  p_turn_id text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, auth
+as 15527
+declare
+  v_user_id uuid := auth.uid();
+  v_turn_id text := coalesce(nullif(trim(p_turn_id), ''), gen_random_uuid()::text);
+  v_prev record;
+  v_prev_summary jsonb := null;
+begin
+  if v_user_id is null then
+    raise exception 'authenticated user required';
+  end if;
+
+  select id, task, project, created_at
+  into v_prev
+  from public.chatgpt_turns
+  where user_id = v_user_id
+    and status = 'open'
+    and id <> v_turn_id
+  order by created_at desc
+  limit 1;
+
+  if found then
+    v_prev_summary := jsonb_build_object(
+      'turn_id', v_prev.id,
+      'task', v_prev.task,
+      'project', v_prev.project,
+      'created_at', v_prev.created_at
+    );
+  end if;
+
+  insert into public.chatgpt_turns (id, user_id, task, project, status, created_at)
+  values (v_turn_id, v_user_id, p_task, p_project, 'open', now())
+  on conflict (id) do update set
+    task = coalesce(excluded.task, public.chatgpt_turns.task),
+    project = coalesce(excluded.project, public.chatgpt_turns.project);
+
+  return jsonb_build_object(
+    'turn_id', v_turn_id,
+    'previous_unfinalized_turn', v_prev_summary
+  );
+end;
+15527;
+
+create or replace function public.finalize_chatgpt_turn(
+  p_turn_id text,
+  p_state_changed boolean,
+  p_summary text,
+  p_refs text[] default '{}'
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, auth
+as 15527
+declare
+  v_user_id uuid := auth.uid();
+  v_turn record;
+begin
+  if v_user_id is null then
+    raise exception 'authenticated user required';
+  end if;
+
+  if p_turn_id is null or trim(p_turn_id) = '' then
+    raise exception 'turn_id required';
+  end if;
+
+  select id, status, state_changed, summary, refs, finalized_at
+  into v_turn
+  from public.chatgpt_turns
+  where id = trim(p_turn_id)
+    and user_id = v_user_id;
+
+  if not found then
+    insert into public.chatgpt_turns (
+      id, user_id, status, state_changed, summary, refs, created_at, finalized_at
+    )
+    values (
+      trim(p_turn_id), v_user_id, 'finalized', p_state_changed, p_summary, coalesce(p_refs, '{}'), now(), now()
+    );
+
+    return jsonb_build_object(
+      'status', 'finalized',
+      'turn_id', trim(p_turn_id),
+      'idempotent', false
+    );
+  end if;
+
+  if v_turn.status = 'finalized' then
+    return jsonb_build_object(
+      'status', 'finalized',
+      'turn_id', v_turn.id,
+      'idempotent', true
+    );
+  end if;
+
+  update public.chatgpt_turns
+  set
+    status = 'finalized',
+    state_changed = p_state_changed,
+    summary = p_summary,
+    refs = coalesce(p_refs, '{}'),
+    finalized_at = now()
+  where id = v_turn.id;
+
+  return jsonb_build_object(
+    'status', 'finalized',
+    'turn_id', v_turn.id,
+    'idempotent', false
+  );
+end;
+15527;

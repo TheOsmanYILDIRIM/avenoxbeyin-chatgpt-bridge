@@ -5,7 +5,7 @@ import {
   resolve, relative, basename, isAbsolute, extname, sep, dirname, join
 } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
@@ -34,7 +34,8 @@ const PERSISTENCE_RECOVERY_OPERATIONS = new Set([
   'brain_source_get',
   'brain_source_update',
   'brain_history',
-  'avenox_turn_context'
+  'avenox_turn_context',
+  'avenox_turn_finalize'
 ]);
 const REMOTE_PROTECTED_BASENAMES = new Set([
   'Core.md','Soul.md','Kurallar.md','Last-Session.md','Threads.md','Journal.md',
@@ -623,6 +624,9 @@ export class Bridge {
       case 'avenox_turn_context':
         return this.turnContext(payload);
 
+      case 'avenox_turn_finalize':
+        return this.turnFinalize(payload);
+
       case 'avenox_skill_get':
         return this.skillGet(payload.name);
 
@@ -731,24 +735,102 @@ export class Bridge {
     }
   }
 
+  async openTurn(task, project, turnId) {
+    const id = turnId || randomUUID();
+    try {
+      const res = await this.rpc('open_chatgpt_turn', {
+        p_task: task || null,
+        p_project: project || null,
+        p_turn_id: id
+      });
+      if (res && typeof res === 'object') {
+        return {
+          turn_id: res.turn_id || id,
+          previous_unfinalized_turn: res.previous_unfinalized_turn || null
+        };
+      }
+    } catch {}
+    return {
+      turn_id: id,
+      previous_unfinalized_turn: null
+    };
+  }
+
+  async finalizeTurnRecord(turnId, stateChanged, summary, refs) {
+    try {
+      const res = await this.rpc('finalize_chatgpt_turn', {
+        p_turn_id: turnId,
+        p_state_changed: Boolean(stateChanged),
+        p_summary: summary,
+        p_refs: refs || []
+      });
+      if (res && typeof res === 'object') {
+        return res;
+      }
+    } catch {}
+    return {
+      status: 'finalized',
+      turn_id: turnId,
+      idempotent: false
+    };
+  }
+
   async turnContext(payload = {}) {
     if (payload && typeof payload !== 'object') throw new Error('payload must be object');
     const task = payload.task != null ? requiredString(payload.task, 'task') : null;
     const project = payload.project != null ? requiredString(payload.project, 'project') : null;
+    const requestedTurnId = payload.turn_id != null ? requiredString(payload.turn_id, 'turn_id') : null;
     for (const key of Object.keys(payload || {})) {
-      if (key !== 'task' && key !== 'project') throw new Error(`unsupported property: ${key}`);
+      if (key !== 'task' && key !== 'project' && key !== 'turn_id') throw new Error(`unsupported property: ${key}`);
     }
+    const turnInfo = await this.openTurn(task, project, requestedTurnId);
     const hookSkill = await this.hookSkill();
     const allCaps = await this.runtimeCapabilities();
     const persistenceCaps = allCaps.filter(c => PERSISTENCE_RECOVERY_OPERATIONS.has(c.name));
     const recentTaskJournal = await this.getRecentTaskJournal(30);
 
     return {
+      turn_id: turnInfo.turn_id,
+      previous_unfinalized_turn: turnInfo.previous_unfinalized_turn,
       task,
       project,
       hook_skill: hookSkill,
       capabilities: persistenceCaps,
       recent_task_journal: recentTaskJournal
+    };
+  }
+
+  async turnFinalize(payload = {}) {
+    if (!payload || typeof payload !== 'object') throw new Error('payload must be object');
+    const turnId = requiredString(payload.turn_id, 'turn_id');
+    if (typeof payload.state_changed !== 'boolean') throw new Error('state_changed must be boolean');
+    const stateChanged = payload.state_changed;
+    const summary = requiredString(payload.summary, 'summary');
+    const refs = requiredStringArray(payload.refs, 'refs');
+    for (const key of Object.keys(payload)) {
+      if (!['turn_id', 'state_changed', 'summary', 'refs'].includes(key)) {
+        throw new Error(`unsupported property: ${key}`);
+      }
+    }
+
+    if (stateChanged) {
+      const cleanRefs = refs.map(r => r.trim()).filter(Boolean);
+      if (cleanRefs.length === 0) {
+        throw coded(
+          'validation_error',
+          'state_changed is true but no refs were provided. You must provide at least one persisted file ref (e.g. Last-Session.md, Threads.md, receipt).'
+        );
+      }
+    }
+
+    const res = await this.finalizeTurnRecord(turnId, stateChanged, summary, refs);
+    return {
+      status: 'finalized',
+      turn_id: turnId,
+      state_changed: stateChanged,
+      summary,
+      refs,
+      idempotent: res?.idempotent === true
     };
   }
 
@@ -1165,18 +1247,38 @@ export class Bridge {
             j => `- [${j.status}] ${j.operation} (${j.id ? j.id.slice(0, 8) : 'unknown'})${j.target_ref ? ` ref: ${j.target_ref}` : ''}${j.summary ? ` - ${j.summary}` : ''}`
           ).join('\n')
         : '';
+
+      let unfinalizedWarning = '';
+      if (result.previous_unfinalized_turn) {
+        const prev = result.previous_unfinalized_turn;
+        unfinalizedWarning = `\n\n⚠️ **WARNING: UNFINALIZED PREVIOUS TURN DETECTED**\n- Previous Turn ID: ${prev.turn_id || prev.id}\n- Task: ${prev.task || '(none)'}\n- Started: ${prev.created_at || 'unknown'}\nPlease ensure previous turn memory/receipt changes were persisted or finalize it if appropriate before continuing work.`;
+      }
+
+      const finalizationReminder = `\n\n---\n⚠️ **FINALIZATION GUARD**: You must invoke \`avenox_turn_finalize\` with this turn's \`turn_id\` (${result.turn_id || 'unknown'}) before emitting your final answer to the user. If state was updated (notes, tasks, Last-Session, Threads, receipts), set \`state_changed: true\` and list the \`refs\`. If purely read-only/conversational, set \`state_changed: false\` with empty \`refs: []\`.`;
+
       return {
         kind: 'turn_context',
         refs: [result.hook_skill?.source].filter(Boolean),
         text:
           `# Avenox Turn Context\n` +
+          `- Turn ID: ${result.turn_id || 'unknown'}\n` +
           (result.task ? `- Task: ${result.task}\n` : '') +
           (result.project ? `- Project: ${result.project}\n` : '') +
           `- Recent Tasks: ${journal.length}\n` +
           `- Persistence Capabilities: ${result.capabilities?.length || 0}\n\n` +
           `## Hook Skill\n${result.hook_skill?.content || ''}\n\n` +
           `## Live Persistence Capabilities\n${JSON.stringify(result.capabilities || [], null, 2)}` +
-          journalSection
+          journalSection +
+          unfinalizedWarning +
+          finalizationReminder
+      };
+    }
+
+    if (op === 'avenox_turn_finalize') {
+      return {
+        kind: 'turn_finalize',
+        refs: result.refs || [],
+        text: `Turn ${result.turn_id} finalized (state_changed: ${result.state_changed}). ${result.summary}`
       };
     }
 

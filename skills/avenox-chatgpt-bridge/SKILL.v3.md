@@ -45,12 +45,14 @@ ChatGPT ortamında shell veya `python3 beyin.py` çalıştırma desteği yoktur.
 - İş kanıtı için `brain_receipt` (`harness: "chatgpt"`)
 - İndeks tazeleme için `brain_sync`
 
-## Zorunlu ve Seçici Finalization Sözleşmesi
+## Zorunlu İki Aşamalı Tur ve Finalization Guard
 
-ChatGPT, kullanıcıya nihai yanıtını göndermeden **hemen önce** sonlandırma kontrolü yapar:
-1. Bu turda tamamlanan iş parçası, değişen görev, netleşen karar veya güncellenecek companion devir kartı (`Last-Session.md`, `Threads.md`, `Journal.md`, `Kurallar.md`) varsa, ilgili kuyruk mutasyonlarını (`brain_task_update`, `brain_vault_update`, `brain_note_create`, `brain_receipt`) çalıştır ve doğrula.
-2. Fikir fırtınası, salt okuma, genel açıklama veya kullanıcının no-memory isteği durumunda **asla kayıt yapma**.
-3. Çakışma durumunda güncel SHA-256 / revizyonu tekrar oku.
+ChatGPT, her anlamlı Avenox turunda iki aşamalı protokolü işletir:
+1. **Başlangıç:** `avenox_turn_context` çağrısı açık bir turn kaydı (`chatgpt_turns`) ve `turn_id` oluşturur. Önceki kapatılmamış bir tur varsa uyarı verir.
+2. **İşlem ve Kalıcılık:** Görev veya companion süreklilik dosyaları (`Last-Session.md`, `Threads.md`, `Journal.md`, `Kurallar.md`) güncellenecekse ilgili kuyruk mutasyonlarını (`brain_task_update`, `brain_vault_update`, `brain_note_create`, `brain_receipt`) çalıştır ve doğrula. Fikir fırtınası veya salt okumada yazma yapma.
+3. **Sonlandırma:** Kullanıcıya nihai yanıt verilmeden **hemen önce** `avenox_turn_finalize` operasyonunu çağır:
+   - Kalıcılık yapıldıysa: `{"turn_id": "...", "state_changed": true, "summary": "...", "refs": ["Last-Session.md", ...]}` (`refs` boş olamaz).
+   - Salt okuma / konuşma ise: `{"turn_id": "...", "state_changed": false, "summary": "...", "refs": []}`.
 
 ## Queue / result
 

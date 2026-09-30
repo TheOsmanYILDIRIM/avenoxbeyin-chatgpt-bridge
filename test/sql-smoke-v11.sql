@@ -53,12 +53,21 @@ begin
   if to_regprocedure('public.get_recent_task_journal(integer)') is null then
     raise exception 'missing get_recent_task_journal(integer)';
   end if;
+
+  if to_regprocedure('public.open_chatgpt_turn(text,text,text)') is null then
+    raise exception 'missing open_chatgpt_turn(text,text,text)';
+  end if;
+
+  if to_regprocedure('public.finalize_chatgpt_turn(text,boolean,text,text[])') is null then
+    raise exception 'missing finalize_chatgpt_turn(text,boolean,text,text[])';
+  end if;
 end
 $$;
 
 insert into public.brain_commands(operation,payload,requested_by)
 values
   ('avenox_turn_context','{"task":"test-task","project":"test-proj"}'::jsonb,'sql-smoke-v11'),
+  ('avenox_turn_finalize','{"turn_id":"turn-123","state_changed":false,"summary":"test","refs":[]}'::jsonb,'sql-smoke-v11'),
   ('brain_vault_list','{}'::jsonb,'sql-smoke-v11'),
   ('brain_vault_find','{"query":"study"}'::jsonb,'sql-smoke-v11'),
   ('brain_vault_search','{"query":"study"}'::jsonb,'sql-smoke-v11'),

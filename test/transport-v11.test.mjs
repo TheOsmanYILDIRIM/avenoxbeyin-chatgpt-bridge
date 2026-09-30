@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 test('worker, canonical schema and migration chain agree on transport v11', async () => {
-  const [worker, capabilities, schema, migration009, migration010, migration011, migration012, migration013, migration014, migration015, migration016] = await Promise.all([
+  const [worker, capabilities, schema, migration009, migration010, migration011, migration012, migration013, migration014, migration015, migration016, migration017] = await Promise.all([
     readFile(new URL('../src/worker.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/capabilities.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../sql/schema.sql', import.meta.url), 'utf8'),
@@ -14,7 +14,8 @@ test('worker, canonical schema and migration chain agree on transport v11', asyn
     readFile(new URL('../sql/migrations/013_vault_discovery_reads.sql', import.meta.url), 'utf8'),
     readFile(new URL('../sql/migrations/014_recovery_task_journal.sql', import.meta.url), 'utf8'),
     readFile(new URL('../sql/migrations/015_chatgpt_turn_context.sql', import.meta.url), 'utf8'),
-    readFile(new URL('../sql/migrations/016_chatgpt_turn_context_finish_rpcs.sql', import.meta.url), 'utf8')
+    readFile(new URL('../sql/migrations/016_chatgpt_turn_context_finish_rpcs.sql', import.meta.url), 'utf8'),
+    readFile(new URL('../sql/migrations/017_chatgpt_turn_guard.sql', import.meta.url), 'utf8')
   ]);
 
   assert.match(worker, /REQUIRED_TRANSPORT_SCHEMA\s*=\s*11/);
@@ -48,14 +49,21 @@ test('worker, canonical schema and migration chain agree on transport v11', asyn
   assert.match(migration015, /avenox_turn_context/);
   assert.match(migration015, /turn_context/);
   assert.match(migration016, /turn_context/);
+  assert.match(migration017, /chatgpt_turns/);
+  assert.match(migration017, /avenox_turn_finalize/);
+  assert.match(migration017, /turn_finalize/);
   assert.match(schema, /avenox_turn_context/);
+  assert.match(schema, /avenox_turn_finalize/);
+  assert.match(schema, /chatgpt_turns/);
   assert.match(capabilities, /avenox_turn_context/);
+  assert.match(capabilities, /avenox_turn_finalize/);
 });
 
 test('fresh-install schema and finish RPCs validate turn_context response kind', async () => {
-  const [schema, migration016] = await Promise.all([
+  const [schema, migration016, migration017] = await Promise.all([
     readFile(new URL('../sql/schema.sql', import.meta.url), 'utf8'),
-    readFile(new URL('../sql/migrations/016_chatgpt_turn_context_finish_rpcs.sql', import.meta.url), 'utf8')
+    readFile(new URL('../sql/migrations/016_chatgpt_turn_context_finish_rpcs.sql', import.meta.url), 'utf8'),
+    readFile(new URL('../sql/migrations/017_chatgpt_turn_guard.sql', import.meta.url), 'utf8')
   ]);
 
   for (const op of [

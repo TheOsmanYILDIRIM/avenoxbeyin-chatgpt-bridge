@@ -10,3 +10,5 @@ config.local.json
 
 .bridge-command-log.jsonl
 .bridge-command-log.jsonl.1
+
+.bridge-hook-state.json
