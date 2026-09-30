@@ -132,7 +132,7 @@ begin
   end if;
 
   if p_status='completed' and p_response_text is not null
-     and p_response_kind not in ('context','doctor','mutation','bootstrap','skill','source') then
+     and p_response_kind not in ('context','doctor','mutation','bootstrap','skill','source','turn_context') then
     raise exception 'invalid response kind';
   end if;
 
@@ -337,7 +337,7 @@ begin
   end if;
 
   if v_status='completed' and v_response_text is not null
-     and v_response_kind not in ('context','doctor','mutation','bootstrap','skill','source') then
+     and v_response_kind not in ('context','doctor','mutation','bootstrap','skill','source','turn_context') then
     raise exception 'invalid response kind';
   end if;
 
