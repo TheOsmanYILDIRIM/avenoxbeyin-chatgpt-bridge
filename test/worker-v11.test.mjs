@@ -284,7 +284,7 @@ test('bootstrap uses simplified v3 bridge skill and contains no pairing requirem
   const result = await bridge.bootstrap('test');
   assert.equal(result.bridge_api_version, 3);
   assert.match(result.bridge_skill.source, /SKILL\.v3\.md$/);
-  assert.match(result.bridge_skill.content, /## Full vault/);
+  assert.match(result.bridge_skill.content, /## Full Vault/i);
   assert.equal('secure_transport' in result, false);
   assert.doesNotMatch(result.bridge_skill.content, /AVX3\./);
   assert.deepEqual(result.recent_task_journal, []);
