@@ -508,7 +508,7 @@ test('periodic chatgpt hook injection appends hook every 4 eligible responses an
   assert.equal(calls.length, 1);
   assert.equal(calls[0].status, 'completed');
   assert.equal(calls[0].projection.text, fileContent);
-  assert.equal(calls[0].projection.text.includes('CHATGPT BEYIN HOOK'), false);
+  assert.equal(calls[0].projection.text.includes('AVENOX CONTRACT CAPSULE'), false);
 
   // Response 2: eligible (brain_receipt)
   await bridge.handle({
@@ -523,7 +523,7 @@ test('periodic chatgpt hook injection appends hook every 4 eligible responses an
   });
   assert.equal(calls.length, 2);
   assert.equal(calls[1].status, 'completed');
-  assert.equal(calls[1].projection.text.includes('CHATGPT BEYIN HOOK'), false);
+  assert.equal(calls[1].projection.text.includes('AVENOX CONTRACT CAPSULE'), false);
 
   // Response 3: eligible (brain_vault_get)
   await bridge.handle({
@@ -533,7 +533,7 @@ test('periodic chatgpt hook injection appends hook every 4 eligible responses an
   });
   assert.equal(calls.length, 3);
   assert.equal(calls[2].status, 'completed');
-  assert.equal(calls[2].projection.text.includes('CHATGPT BEYIN HOOK'), false);
+  assert.equal(calls[2].projection.text.includes('AVENOX CONTRACT CAPSULE'), false);
 
   // Response 4: eligible (brain_receipt) -> MUST INJECT HOOK
   await bridge.handle({
@@ -549,9 +549,9 @@ test('periodic chatgpt hook injection appends hook every 4 eligible responses an
   assert.equal(calls.length, 4);
   assert.equal(calls[3].status, 'completed');
   // Hook delimiter and managed content appended to projected response_text
-  assert.equal(calls[3].projection.text.includes('CHATGPT BEYIN HOOK'), true);
-  assert.equal(calls[3].projection.text.includes(hookSkill.content), true);
-  assert.ok(calls[3].projection.text.endsWith(hookSkill.content));
+  assert.equal(calls[3].projection.text.includes('AVENOX CONTRACT CAPSULE'), true);
+  assert.equal(calls[3].projection.text.includes('contract='), true);
+  assert.match(calls[3].projection.text, /contract=/);
   // Does NOT inject core Beyin skill
   assert.equal(calls[3].projection.text.includes('Core brain skill'), false);
   // Preserves result and refs semantics completely
@@ -567,7 +567,7 @@ test('periodic chatgpt hook injection appends hook every 4 eligible responses an
   assert.equal(calls.length, 5);
   assert.equal(calls[4].status, 'completed');
   assert.equal(calls[4].projection.text, fileContent);
-  assert.equal(calls[4].projection.text.includes('CHATGPT BEYIN HOOK'), false);
+  assert.equal(calls[4].projection.text.includes('AVENOX CONTRACT CAPSULE'), false);
 });
 
 test('only eligible ChatGPT responses count towards hook injection cadence', async t => {
@@ -587,7 +587,7 @@ test('only eligible ChatGPT responses count towards hook injection cadence', asy
     operation: 'brain_vault_get',
     payload: { source: 'Note.md' }
   });
-  assert.equal(calls.at(-1).projection.text.includes('CHATGPT BEYIN HOOK'), false);
+  assert.equal(calls.at(-1).projection.text.includes('AVENOX CONTRACT CAPSULE'), false);
 
   // Response 2 (eligible: count = 2)
   await bridge.handle({
@@ -595,7 +595,7 @@ test('only eligible ChatGPT responses count towards hook injection cadence', asy
     operation: 'brain_vault_get',
     payload: { source: 'Note.md' }
   });
-  assert.equal(calls.at(-1).projection.text.includes('CHATGPT BEYIN HOOK'), false);
+  assert.equal(calls.at(-1).projection.text.includes('AVENOX CONTRACT CAPSULE'), false);
 
   // Ineligible 1: maintenance sync
   await bridge.handle({
@@ -603,7 +603,7 @@ test('only eligible ChatGPT responses count towards hook injection cadence', asy
     operation: 'brain_sync',
     payload: {}
   });
-  assert.equal(calls.at(-1).projection.text.includes('CHATGPT BEYIN HOOK'), false);
+  assert.equal(calls.at(-1).projection.text.includes('AVENOX CONTRACT CAPSULE'), false);
 
   // Ineligible 2: doctor diagnostic
   await bridge.handle({
@@ -611,7 +611,7 @@ test('only eligible ChatGPT responses count towards hook injection cadence', asy
     operation: 'brain_doctor',
     payload: {}
   });
-  assert.equal(calls.at(-1).projection.text.includes('CHATGPT BEYIN HOOK'), false);
+  assert.equal(calls.at(-1).projection.text.includes('AVENOX CONTRACT CAPSULE'), false);
 
   // Ineligible 3: failed operation
   await bridge.handle({
@@ -620,7 +620,7 @@ test('only eligible ChatGPT responses count towards hook injection cadence', asy
     payload: {}
   });
   assert.equal(calls.at(-1).status, 'failed');
-  assert.equal((calls.at(-1).projection?.text || '').includes('CHATGPT BEYIN HOOK'), false);
+  assert.equal((calls.at(-1).projection?.text || '').includes('AVENOX CONTRACT CAPSULE'), false);
 
   // Response 3 (eligible: count = 3)
   await bridge.handle({
@@ -628,7 +628,7 @@ test('only eligible ChatGPT responses count towards hook injection cadence', asy
     operation: 'brain_vault_get',
     payload: { source: 'Note.md' }
   });
-  assert.equal(calls.at(-1).projection.text.includes('CHATGPT BEYIN HOOK'), false);
+  assert.equal(calls.at(-1).projection.text.includes('AVENOX CONTRACT CAPSULE'), false);
 
   // Response 4 (eligible: count = 4) -> INJECTS!
   await bridge.handle({
@@ -641,8 +641,8 @@ test('only eligible ChatGPT responses count towards hook injection cadence', asy
       harness: 'chatgpt'
     }
   });
-  assert.equal(calls.at(-1).projection.text.includes('CHATGPT BEYIN HOOK'), true);
-  assert.equal(calls.at(-1).projection.text.includes(hookSkill.content), true);
+  assert.equal(calls.at(-1).projection.text.includes('AVENOX CONTRACT CAPSULE'), true);
+  assert.equal(calls.at(-1).projection.text.includes('contract='), true);
   assert.deepEqual(calls.at(-1).result, { status: 'ok' });
 });
 
@@ -671,7 +671,7 @@ test('cadence is configurable and counter persists across bridge instances', asy
     payload: { source: 'Note.md' }
   });
   assert.equal(calls1.length, 1);
-  assert.equal(calls1[0].projection.text.includes('CHATGPT BEYIN HOOK'), false);
+  assert.equal(calls1[0].projection.text.includes('AVENOX CONTRACT CAPSULE'), false);
 
   // Simulate worker restart: new Bridge instance pointing to same root and hook_state_path
   const bridge2 = new Bridge({
@@ -693,14 +693,16 @@ test('cadence is configurable and counter persists across bridge instances', asy
     payload: { source: 'Note.md' }
   });
   assert.equal(calls2.length, 1);
-  assert.equal(calls2[0].projection.text.includes('CHATGPT BEYIN HOOK'), true);
+  assert.equal(calls2[0].projection.text.includes('AVENOX CONTRACT CAPSULE'), true);
 });
 
-test('local beyin CLI and runtime scripts support chatgpt harness end-to-end', async () => {
+test('local beyin CLI and runtime scripts support chatgpt harness end-to-end', async t => {
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');
   const execFileAsync = promisify(execFile);
   const cliScript = '/data/data/com.termux/files/home/vault/.claude/scripts/beyin_v3_cli.py';
+  const { access } = await import('node:fs/promises');
+  try { await access(cliScript); } catch { t.skip('Termux-local Beyin CLI is not present on GitHub runner'); return; }
 
   // Test CLI help shows chatgpt in harness choices
   const { stdout } = await execFileAsync('python3', [cliScript, 'receipt', '--help']);
