@@ -11,7 +11,7 @@
   "scripts": {
     "start": "node src/cli.mjs run",
     "doctor": "node src/cli.mjs doctor",
-    "test": "node --check src/cli.mjs && node --check src/worker.mjs && node --check src/telemetry.mjs && node --test test/process.test.mjs test/source.test.mjs test/updater.test.mjs test/worker-v11.test.mjs test/transport-v11.test.mjs test/telemetry.test.mjs",
+    "test": "node --check src/cli.mjs && node --check src/worker.mjs && node --check src/telemetry.mjs && node --test test/process.test.mjs test/source.test.mjs test/updater.test.mjs test/worker-v11.test.mjs test/transport-v11.test.mjs test/telemetry.test.mjs test/contract-cache.test.mjs",
     "update": "node src/cli.mjs update",
     "update:check": "node src/cli.mjs update --check",
     "rollback": "node src/cli.mjs rollback",
