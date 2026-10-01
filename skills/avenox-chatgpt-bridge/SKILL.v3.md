@@ -112,3 +112,20 @@ Yeni oturumda açık iş gerekiyorsa queue'daki gerçek command/job durumunu inc
 3. Bridge gerekli Brain kaynağını sağlayamıyorsa uygun fallback
 
 Bilgi yoksa uydurma.
+
+
+## Turn Latency Budget
+
+ChatGPT tarafında amaç yalnız Supabase request sayısını değil, tek assistant turunun duvar-saati süresini ve model↔tool round-trip sayısını da düşük tutmaktır.
+
+- Snapshot fast-path dışında sırf doğrulama için gereksiz Avenox çağrısı yapma.
+- Aynı kaynaktan alınabilecek bağımsız okumaları mümkün olduğunda tek orchestration/tool çağrısında grupla.
+- GitHub/Supabase zaten yeterli kanıt sağlıyorsa aynı bilgiyi tekrar AGY'ye sordurma.
+- AGY işi gerekiyorsa bir kez enqueue et; aynı job_id üzerinde cursor-aware wait kullan.
+- Uygun tool ortamında art arda wait işlemlerini tek orchestration çağrısı içinde yürüt; her 20–30 saniyelik timeout sonrasında modeli yeniden devreye sokma.
+- changed=false olan wait sonucunu kullanıcıya milestone gibi gösterme ve aynı progress_seq'i yeniden işleme.
+- Normal durumda user-visible progress yalnız gerçek faz değişimlerinde verilir; her düşük değerli tool eventinde yeni mesaj üretme.
+- Bridge/debug işi dışında aynı turda DB + AGY + GitHub ile aynı gerçeği üç kez doğrulama.
+- Uzun işte doğruluk için gereken kontroller korunur; fakat doğrulamalar mümkün olduğunca AGY job'unun kendi içinde toplanır ve tek final sonuç döner.
+
+Bu kurallar güvenlik, gerçek terminal durumunu bekleme ve idempotency kurallarını gevşetmez.
