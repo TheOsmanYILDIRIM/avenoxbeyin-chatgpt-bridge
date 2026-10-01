@@ -259,7 +259,7 @@ export class Bridge {
           cwd:this.c.vault_root,
           windowsHide:true,
           maxBuffer:2 * 1024 * 1024,
-          timeout:Number(this.c.capability_probe_timeout_ms || 3000),
+          timeout:Number(this.c.capability_probe_timeout_ms || 15000),
           killSignal:'SIGKILL'
         }
       );
@@ -273,9 +273,11 @@ export class Bridge {
     // so they may be absent from top-level -h. Probe only missing commands with
     // --help; argparse exits before executing the command, so this has no side effect.
     const missing = [...new Set(needsCli.values())].filter(name => !cli.has(name));
-    for (const name of missing) {
-      if (await this.cliCommandExists(name)) cli.add(name);
-    }
+    await Promise.all(
+      missing.map(async name => {
+        if (await this.cliCommandExists(name)) cli.add(name);
+      })
+    );
 
     this._runtimeCapabilities = CAPABILITIES.map(cap => {
       const cliName = needsCli.get(cap.name);
@@ -309,7 +311,7 @@ export class Bridge {
           cwd:this.c.vault_root,
           windowsHide:true,
           maxBuffer:2 * 1024 * 1024,
-          timeout:Number(this.c.capability_probe_timeout_ms || 3000),
+          timeout:Number(this.c.capability_probe_timeout_ms || 15000),
           killSignal:'SIGKILL'
         }
       );
