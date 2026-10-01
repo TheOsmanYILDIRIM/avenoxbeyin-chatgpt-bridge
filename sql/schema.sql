@@ -654,21 +654,26 @@ begin
     raise exception 'invalid contract snapshot';
   end if;
 
+  select * into v_row
+  from public.avenox_contract_snapshot
+  where singleton=true;
+
+  if v_row.singleton
+     and v_row.contract_hash = v_hash
+     and v_row.contract_version = v_version then
+    return v_row.snapshot || jsonb_build_object('published_at',v_row.updated_at,'changed',false);
+  end if;
+
   insert into public.avenox_contract_snapshot(singleton,contract_hash,contract_version,snapshot,updated_at)
   values(true,v_hash,v_version,p_snapshot,now())
   on conflict(singleton) do update
     set contract_hash=excluded.contract_hash,
         contract_version=excluded.contract_version,
         snapshot=excluded.snapshot,
-        updated_at=case
-          when public.avenox_contract_snapshot.contract_hash is distinct from excluded.contract_hash
-            or public.avenox_contract_snapshot.contract_version is distinct from excluded.contract_version
-          then now()
-          else public.avenox_contract_snapshot.updated_at
-        end
+        updated_at=now()
   returning * into v_row;
 
-  return v_row.snapshot || jsonb_build_object('published_at',v_row.updated_at);
+  return v_row.snapshot || jsonb_build_object('published_at',v_row.updated_at,'changed',true);
 end;
 $$;
 
