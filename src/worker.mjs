@@ -328,14 +328,22 @@ export class Bridge {
   async run() {
     await this.transportContract();
     await this.refreshContractSnapshot();
+    let idleStreak = 0;
     for (;;) {
+      let hadWork = false;
       try {
         const cmd = await this.claimNext();
-        if (cmd) await this.handle(cmd);
+        if (cmd) {
+          hadWork = true;
+          idleStreak = 0;
+          await this.handle(cmd);
+        }
       } catch (e) {
         console.error('[bridge]', e.message);
       }
-      await new Promise(r => setTimeout(r, this.c.poll_interval_ms || 5000));
+      if (!hadWork) idleStreak += 1;
+      const delay = hadWork ? 250 : adaptiveIdlePollMs(idleStreak, Math.random);
+      await new Promise(r => setTimeout(r, delay));
     }
   }
 
@@ -1597,3 +1605,16 @@ function sha(value) {
 }
 
 export function contractHashForTest(payload) { return sha(stableJson(payload)); }
+
+export function adaptiveIdlePollMs(idleStreak, rand = Math.random) {
+  const n = Math.max(1, Number(idleStreak) || 1);
+  let base;
+  if (n <= 10) base = 3000;
+  else if (n <= 24) base = 5000;
+  else if (n <= 36) base = 10000;
+  else if (n <= 42) base = 30000;
+  else base = 60000;
+  const r = Math.max(0, Math.min(1, Number(rand()) || 0));
+  const jitter = 0.9 + (r * 0.2);
+  return Math.round(base * jitter);
+}
