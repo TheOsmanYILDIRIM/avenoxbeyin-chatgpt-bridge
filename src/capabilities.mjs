@@ -2,8 +2,8 @@ export const CAPABILITIES = [
   {
     name: 'avenox_bootstrap',
     mode: 'read',
-    description: 'Return the current Bridge skill, capability catalog, Avenox core skill, version, skill manifest and compact recent task recovery journal.',
-    maps_to: 'versioned Bridge skill + local Avenox skill files + .beyin-version + Supabase task journal',
+    description: 'Fallback/rebuild bootstrap for the Avenox contract when the cached contract snapshot is missing, invalid, changed or explicit recovery needs the recent task journal.',
+    maps_to: 'contract snapshot rebuild + local Avenox skill files + .beyin-version + Supabase task journal',
     payload_schema: { type:'object', properties:{ task:{type:'string'} }, additionalProperties:false }
   },
   {
@@ -16,14 +16,14 @@ export const CAPABILITIES = [
   {
     name: 'avenox_turn_context',
     mode: 'read',
-    description: 'Lightweight per-turn context hook for ChatGPT turns. Opens a tracked turn in Supabase, checks for unfinalized previous turns, and returns the hook skill, recent task journal, and persistence capabilities.',
+    description: 'Explicit refresh/recovery/debug context. Opens a tracked turn only when requested; normal snapshot-cached ChatGPT turns do not call this operation.',
     maps_to: 'chatgpt-beyin-hook skill + Supabase chatgpt_turns + Supabase task journal + live persistence capabilities',
     payload_schema: { type:'object', properties:{ task:{type:'string'}, project:{type:'string'}, turn_id:{type:'string'} }, additionalProperties:false }
   },
   {
     name: 'avenox_turn_finalize',
     mode: 'write',
-    description: 'Validate and record completion of a ChatGPT turn in Supabase after persisting any state changes.',
+    description: 'Finalize only a tracked ChatGPT turn that was explicitly opened through avenox_turn_context; normal snapshot-cached turns do not require it.',
     maps_to: 'Supabase finalize_chatgpt_turn RPC',
     payload_schema: {
       type: 'object',
