@@ -326,6 +326,12 @@ export class Bridge {
 
   async claimNext() {
     const transport = await this.transportContract();
+    if (typeof transport.claim_wait_rpc === 'string' && transport.claim_wait_rpc) {
+      return this.rpc(transport.claim_wait_rpc, {
+        p_timeout_seconds: Number(this.c.claim_wait_seconds || 25),
+        p_poll_interval_ms: Number(this.c.claim_wait_poll_ms || 1000)
+      });
+    }
     return this.rpc(transport.claim_rpc);
   }
 
@@ -346,7 +352,9 @@ export class Bridge {
         console.error('[bridge]', e.message);
       }
       if (!hadWork) idleStreak += 1;
-      const delay = hadWork ? 250 : adaptiveIdlePollMs(idleStreak, Math.random);
+      const transport = await this.transportContract();
+      const serverLongPoll = typeof transport.claim_wait_rpc === 'string' && transport.claim_wait_rpc;
+      const delay = hadWork ? 250 : (serverLongPoll ? 250 : adaptiveIdlePollMs(idleStreak, Math.random));
       await new Promise(r => setTimeout(r, delay));
     }
   }
@@ -651,7 +659,7 @@ export class Bridge {
       case 'brain_skill_sync': {
         const result = await this.runBeyin('skill-sync');
         this._runtimeCapabilities = null;
-        await this.refreshContractSnapshot(true);
+        await this.refreshContractSnapshot(false);
         return result;
       }
 
