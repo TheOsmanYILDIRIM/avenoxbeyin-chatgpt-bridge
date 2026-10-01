@@ -18,7 +18,8 @@ const BRIDGE_ROOT = resolve(HERE, '..');
 const BRIDGE_SKILL_PATH = resolve(BRIDGE_ROOT, 'skills', 'avenox-chatgpt-bridge', 'SKILL.v3.md');
 export const REQUIRED_TRANSPORT_SCHEMA = 11;
 export const DEFAULT_CHATGPT_HOOK_CADENCE = 4;
-export const CHATGPT_HOOK_DELIMITER = '\n\n---\n# CHATGPT BEYIN HOOK\n\n';
+export const CHATGPT_HOOK_DELIMITER = '\n\n---\n# AVENOX CONTRACT CAPSULE\n\n';
+export const CONTRACT_SNAPSHOT_VERSION = 1;
 
 const RECEIPT_HARNESSES = new Set(['codex','claude','antigravity','hermes','opencode','omp','chatgpt']);
 const JEV_FEATURES = new Set(['context','review','answer','auto_context']);
@@ -75,6 +76,7 @@ export class Bridge {
     this._transportContract = null;
     this._workerCommit = undefined;
     this._brainVersion = undefined;
+    this._contractSnapshot = null;
     this.chatgptHookCadence = Number(
       config?.chatgpt_hook_cadence ?? process.env.AVENOX_CHATGPT_HOOK_CADENCE ?? DEFAULT_CHATGPT_HOOK_CADENCE
     );
@@ -146,6 +148,65 @@ export class Bridge {
 
   bridgeRoot() {
     return this.c.bridge_root || BRIDGE_ROOT;
+  }
+
+  async buildContractSnapshot() {
+    const root = this.skillRoot();
+    const names = (await readdir(root, { withFileTypes: true }))
+      .filter(e => e.isDirectory()).map(e => e.name).sort();
+    const manifest = [];
+    for (const name of names) {
+      try {
+        const s = await this.skillGet(name);
+        manifest.push({ name: s.name, description: s.description, sha256: s.sha256 });
+      } catch {}
+    }
+    const bridgeSkill = await this.bridgeSkill();
+    const core = await this.skillGet('beyin');
+    const capabilities = await this.runtimeCapabilities();
+    const payload = {
+      bridge_api_version: BRIDGE_API_VERSION,
+      bridge_skill: bridgeSkill,
+      bridge_capabilities: capabilities,
+      core_skill: core,
+      skills_manifest: manifest
+    };
+    const contractHash = sha(stableJson(payload));
+    return {
+      contract_version: CONTRACT_SNAPSHOT_VERSION,
+      contract_hash: contractHash,
+      ...payload,
+      worker_commit: await this.workerCommit(),
+      brain_version: await this.brainVersion(),
+      updated_at: new Date().toISOString()
+    };
+  }
+
+  async refreshContractSnapshot(force = false) {
+    const snapshot = await this.buildContractSnapshot();
+    if (!force && this._contractSnapshot?.contract_hash === snapshot.contract_hash) {
+      return this._contractSnapshot;
+    }
+    try {
+      const published = await this.rpc('publish_avenox_contract_snapshot', { p_snapshot: snapshot });
+      this._contractSnapshot = published && typeof published === 'object' ? published : snapshot;
+    } catch (e) {
+      // Snapshot publication is an optimization; queue functionality must remain available.
+      console.error('[contract-snapshot]', e.message);
+      this._contractSnapshot = snapshot;
+    }
+    return this._contractSnapshot;
+  }
+
+  async compactHookCapsule() {
+    const snapshot = this._contractSnapshot || await this.refreshContractSnapshot();
+    return [
+      `contract=${snapshot.contract_hash} v${snapshot.contract_version}`,
+      '- Reuse the cached contract while this hash is unchanged.',
+      '- Use live brain_* operations only when needed; avenox_turn_context is refresh/recovery/debug only.',
+      '- Keep the same command/job id while work is active; progress means continue, terminal means stop.',
+      '- Persist only meaningful durable state changes.'
+    ].join('\n');
   }
 
   async doctor() {
@@ -266,6 +327,7 @@ export class Bridge {
 
   async run() {
     await this.transportContract();
+    await this.refreshContractSnapshot();
     for (;;) {
       try {
         const cmd = await this.claimNext();
@@ -332,12 +394,12 @@ export class Bridge {
         const nextCount = this._hookCounter + 1;
         if (nextCount >= this.chatgptHookCadence) {
           try {
-            const hook = await this.hookSkill();
-            if (hook?.content) {
+            const capsule = await this.compactHookCapsule();
+            if (capsule) {
               const baseText = projection.text ?? '';
               projection = {
                 ...projection,
-                text: `${baseText}${CHATGPT_HOOK_DELIMITER}${hook.content}`
+                text: `${baseText}${CHATGPT_HOOK_DELIMITER}${capsule}`
               };
             }
           } catch (e) {
@@ -574,8 +636,12 @@ export class Bridge {
       case 'brain_history':
         return this.runBeyin('history', [requiredString(payload.id, 'id')]);
 
-      case 'brain_skill_sync':
-        return this.runBeyin('skill-sync');
+      case 'brain_skill_sync': {
+        const result = await this.runBeyin('skill-sync');
+        this._runtimeCapabilities = null;
+        await this.refreshContractSnapshot(true);
+        return result;
+      }
 
       case 'brain_companion_compact':
         return this.runBeyin('companion-compact', payload.dry_run === true ? ['--dry-run'] : []);
@@ -689,31 +755,11 @@ export class Bridge {
   }
 
   async bootstrap(task) {
-    const root = this.skillRoot();
-    const names = (await readdir(root, { withFileTypes: true }))
-      .filter(e => e.isDirectory()).map(e => e.name).sort();
-    const manifest = [];
-    for (const name of names) {
-      try {
-        const s = await this.skillGet(name);
-        manifest.push({ name: s.name, description: s.description, sha256: s.sha256 });
-      } catch {}
-    }
-    const bridgeSkill = await this.bridgeSkill();
-    const core = await this.skillGet('beyin');
-    let version = 'unknown';
-    try {
-      version = (await readFile(resolve(this.c.vault_root, '.beyin-version'), 'utf8')).trim();
-    } catch {}
+    const snapshot = await this.refreshContractSnapshot();
     const recentTaskJournal = await this.getRecentTaskJournal(30);
     return {
       task,
-      brain_version: version,
-      bridge_api_version: BRIDGE_API_VERSION,
-      bridge_skill: bridgeSkill,
-      bridge_capabilities: await this.runtimeCapabilities(),
-      core_skill: core,
-      skills_manifest: manifest,
+      ...snapshot,
       recent_task_journal: recentTaskJournal
     };
   }
@@ -1230,7 +1276,7 @@ export class Bridge {
         kind: 'bootstrap',
         refs: [result.bridge_skill.source, result.core_skill.source],
         text:
-          `# Avenox Bootstrap\n- Brain: ${result.brain_version}\n- Bridge API: ${result.bridge_api_version}\n- Skills: ${result.skills_manifest.length}\n- Recent Tasks: ${journal.length}\n\n` +
+          `# Avenox Bootstrap\n- Brain: ${result.brain_version}\n- Bridge API: ${result.bridge_api_version}\n- Contract: ${result.contract_hash} (v${result.contract_version})\n- Skills: ${result.skills_manifest.length}\n- Recent Tasks: ${journal.length}\n\n` +
           `## Bridge Skill\n${result.bridge_skill.content}\n\n` +
           `## Bridge Capabilities\n${JSON.stringify(result.bridge_capabilities, null, 2)}\n\n` +
           `## Core Skill\n${result.core_skill.content}\n\n## Skills Manifest\n` +
@@ -1539,6 +1585,15 @@ function withTimeout(promise, ms, operation) {
     })
   ]).finally(() => clearTimeout(timer));
 }
+export function stableJson(value) {
+  if (Array.isArray(value)) return '[' + value.map(stableJson).join(',') + ']';
+  if (value && typeof value === 'object') {
+    return '{' + Object.keys(value).sort().map(k => JSON.stringify(k) + ':' + stableJson(value[k])).join(',') + '}';
+  }
+  return JSON.stringify(value);
+}
 function sha(value) {
   return createHash('sha256').update(value).digest('hex');
 }
+
+export function contractHashForTest(payload) { return sha(stableJson(payload)); }
