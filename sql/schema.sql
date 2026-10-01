@@ -497,7 +497,7 @@ returns jsonb
 language plpgsql
 security definer
 set search_path = public, auth
-as $
+as $$
 declare
   v_user_id uuid := auth.uid();
   v_turn_id text := coalesce(nullif(trim(p_turn_id), ''), gen_random_uuid()::text);
@@ -537,7 +537,7 @@ begin
     'previous_unfinalized_turn', v_prev_summary
   );
 end;
-$;
+$$;
 
 create or replace function public.finalize_chatgpt_turn(
   p_turn_id text,
@@ -549,7 +549,7 @@ returns jsonb
 language plpgsql
 security definer
 set search_path = public, auth
-as $
+as $$
 declare
   v_user_id uuid := auth.uid();
   v_turn record;
@@ -606,7 +606,7 @@ begin
     'idempotent', false
   );
 end;
-$;
+$$;
 
 
 -- Contract snapshot cache: read-mostly ChatGPT bootstrap fast path.
