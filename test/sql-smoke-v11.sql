@@ -16,6 +16,10 @@ $$;
 
 create schema if not exists auth;
 
+create table if not exists auth.users (
+  id uuid primary key
+);
+
 create or replace function auth.uid()
 returns uuid
 language sql
@@ -60,6 +64,18 @@ begin
 
   if to_regprocedure('public.finalize_chatgpt_turn(text,boolean,text,text[])') is null then
     raise exception 'missing finalize_chatgpt_turn(text,boolean,text,text[])';
+  end if;
+
+  if to_regprocedure('public.get_avenox_contract_snapshot()') is null then
+    raise exception 'missing get_avenox_contract_snapshot()';
+  end if;
+
+  if to_regprocedure('public.claim_next_brain_command_wait(integer,integer)') is null then
+    raise exception 'missing claim_next_brain_command_wait(integer,integer)';
+  end if;
+
+  if to_regprocedure('public.wait_brain_command(uuid,integer,integer)') is null then
+    raise exception 'missing wait_brain_command(uuid,integer,integer)';
   end if;
 end
 $$;
