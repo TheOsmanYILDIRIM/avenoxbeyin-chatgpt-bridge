@@ -199,9 +199,13 @@ export class Bridge {
   }
 
   async compactHookCapsule() {
-    const snapshot = this._contractSnapshot || await this.refreshContractSnapshot();
+    let snapshot = this._contractSnapshot;
+    if (!snapshot) {
+      try { snapshot = await this.refreshContractSnapshot(); }
+      catch { snapshot = null; }
+    }
     return [
-      `contract=${snapshot.contract_hash} v${snapshot.contract_version}`,
+      `contract=${snapshot?.contract_hash || 'unavailable'} v${snapshot?.contract_version || CONTRACT_SNAPSHOT_VERSION}`,
       '- Reuse the cached contract while this hash is unchanged.',
       '- Use live brain_* operations only when needed; avenox_turn_context is refresh/recovery/debug only.',
       '- Keep the same command/job id while work is active; progress means continue, terminal means stop.',
