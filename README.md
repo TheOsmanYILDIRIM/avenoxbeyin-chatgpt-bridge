@@ -22,7 +22,7 @@ Supabase is the remote transport. Avenox Beyin remains the local source of truth
 
 ## Current model — Bridge API v3
 
-The worker discovers and publishes a live capability catalog at bootstrap. ChatGPT must use that catalog instead of guessing operation names or payloads.
+The worker discovers the live capability catalog and publishes a hashed contract snapshot. ChatGPT should read that snapshot once per conversation, cache it by contract_hash, and only fall back to the queue-based bootstrap when the snapshot is missing or explicitly refreshed.
 
 Full Brain continuity is available through:
 
@@ -70,7 +70,7 @@ They preserve vault-root containment, credential/runtime deny rules, symlink rej
 
 The live catalog currently covers bootstrap/skills, context, exact source and vault access, notes, tasks, receipts, sync/history, skill sync, companion maintenance, preferences, Brain lifecycle/update operations and Jev controls.
 
-Availability is runtime-probed. The bootstrap result is authoritative.
+Availability is runtime-probed. The current contract snapshot is authoritative while its contract_hash is unchanged; queue bootstrap is the rebuild/fallback path.
 
 ## Host model
 
@@ -172,12 +172,15 @@ GitHub CI must pass both the Node and PostgreSQL jobs.
 
 Add `docs/CHATGPT-INSTRUCTIONS.md` to the private ChatGPT Project instructions and connect the user's Supabase project.
 
-The Project instruction is deliberately small. The current Bridge behavior is loaded dynamically from bootstrap through:
+The Project instruction is deliberately small. The current Bridge behavior is loaded from the cached contract snapshot through:
 
+- `contract_hash` / `contract_version`
 - `bridge_skill`
 - `bridge_capabilities`
 - `core_skill`
 - `skills_manifest`
+
+The worker publishes the snapshot on startup and after skill sync only when the deterministic contract hash changes. Periodic ChatGPT reminders use a compact capsule instead of retransmitting the full hook skill. Idle queue polling backs off adaptively to reduce Supabase traffic.
 
 ## Relationship to Avenox Beyin
 
