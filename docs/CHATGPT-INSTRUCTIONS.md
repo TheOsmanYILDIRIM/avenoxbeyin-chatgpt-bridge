@@ -1,31 +1,18 @@
 # ChatGPT Project Instructions
 
-## 1. Oturum Başlangıcı — Contract Snapshot Fast Path
-- İlk anlamlı Avenox/Beyin görevinden önce bağlı Supabase projesinden **önce** `public.get_avenox_contract_snapshot()` (veya `public.avenox_contract_snapshot`) ile güncel contract snapshot'ı oku.
-- Snapshot varsa `contract_hash`, `contract_version`, `bridge_skill`, `bridge_capabilities`, `core_skill`, `skills_manifest` alanlarını bu konuşmanın Avenox sözleşmesi kabul et.
-- Aynı konuşmada `contract_hash` değişmedikçe snapshot'ı tekrar okuma; konuşma içi cache kullan.
-- Snapshot yoksa veya açıkça refresh/rebuild gerekiyorsa `avenox_bootstrap` queue operasyonunu fallback olarak çalıştır.
-- Basit selamlaşma ve sosyal sohbet için hiçbir Avenox çağrısı gerekmez.
+## Avenox
+- İlk anlamlı Avenox/Beyin işinde `avenox-bridge` üzerinden `public.get_avenox_contract_snapshot()` çağır; `contract_hash`, `bridge_skill`, `bridge_capabilities`, `core_skill`, `skills_manifest` bu konuşmanın sözleşmesidir.
+- Aynı `contract_hash` boyunca snapshot/bootstrap yenileme. Normal turlarda `avenox_turn_context` çağırma; yalnız sözleşmedeki gerekli `brain_*` operasyonlarını kullan.
+- `avenox_bootstrap` sadece snapshot yok/bozuksa, hash değişmişse veya açık recovery/debug gerekiyorsa kullan. Queue'da aynı command ID'yi terminal olana kadar izle; aktif işi yeniden oluşturma.
+- Operation, payload veya transport uydurma. Basit sohbet için Avenox çağrısı yapma.
 
-## 2. Normal Turlar — Per-Turn RPC Yok
-- `avenox_turn_context` artık her anlamlı turdan önce zorunlu değildir.
-- Normal sohbetlerde Supabase çağrısı yapma.
-- `avenox_turn_context` yalnızca explicit refresh, recovery, debug veya continuity onarımı gerektiğinde kullanılır.
-- Gerçek Beyin işi gerektiğinde yalnız gereken `brain_*` operasyonunu çağır.
-- Operation adı, payload alanı, transport davranışı veya capability tahmin etme. Canlı snapshot/sözleşmede yoksa uydurma.
+## Süreklilik
+Kullanıcı “devam et”, “kaldığımız yerden”, “ne durumda”, “yarım kalan işi sürdür” vb. dediğinde önce `antigravity-bridge` üzerinde `public.find_resumable_agent_job('chatgpt', null)` çağır.
 
-## 3. Compact Hook Capsule
-- Bridge birkaç tamamlanmış ChatGPT-facing yanıtta bir full hook skill yerine kısa bir contract capsule ekler.
-- Capsule içindeki `contract=<hash>` konuşmadaki cached hash ile aynıysa full bootstrap/context refresh yapma.
-- Hash değişirse snapshot'ı bir kez yeniden oku.
-- Capsule kuralları: aktif command/job ID'yi koru; progress terminal değildir; yalnız anlamlı kalıcı değişiklikleri persist et.
+- `found=true`: dönen `job_id`, `conversation_id`, özet/hedef/next-step/context'i kullan.
+- `snapshot_active=true` veya durum `pending|claimed|running`: aynı işi takip et, yenisini başlatma.
+- `resume_required=true`: aynı job'ı mevcut resume RPC ile sürdür.
+- Ancak resumable iş yoksa Avenox/Beyin bağlamına geç.
 
-## 4. Queue & Result Handling
-- Kuyruk operasyonlarında oluşturulan command ID'yi takip et ve yalnız o command'in durumunu + `brain_responses` sonucunu oku.
-- `pending`, `claimed`, `running` ise aynı assistant turunda aynı ID ile devam et; aynı işi yeni command oluşturarak başlatma.
-- `completed`, `failed`, `conflict` terminaldir.
-
-## 5. Persistence
-- Kalıcı mimari karar, görev durumu, companion continuity veya receipt gerektiren işlerde uygun `brain_*` write operasyonunu kullan.
-- Salt okuma, fikir fırtınası, genel soru veya kullanıcının no-memory talebinde yazma yapma.
-- `avenox_turn_finalize` yalnız tracked turn gerçekten `avenox_turn_context` ile açılmışsa kullanılır; normal snapshot-cached turlarda zorunlu değildir.
+## Kalıcılık
+Yalnız anlamlı kalıcı değişikliklerde uygun `brain_*` write operasyonunu kullan. GitHub işlerinde oturumlar arası devam için repo içindeki kısa handoff/memory MD dosyasını güncel tut.
