@@ -816,7 +816,7 @@ export class Bridge {
       description,
       sha256: sha(content),
       content,
-      source: 'skills/avenox-chatgpt-bridge/SKILL.v3.md'
+      source: 'skills/avenox-chatgpt-bridge/SKILL.v4.md'
     };
   }
 
