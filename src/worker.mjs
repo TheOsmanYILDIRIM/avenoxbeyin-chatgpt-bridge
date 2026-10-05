@@ -1110,7 +1110,7 @@ export class Bridge {
     const recursive = payload.recursive !== false;
     const maxEntries = payload.max_entries == null
       ? 500
-      : intInRange(payload.max_entries, 1, 2000, 'max_entries');
+      : intInRange(payload.max_entries, 1, 5000, 'max_entries');
 
     const root = await realpath(this.c.vault_root);
     let start = root;
