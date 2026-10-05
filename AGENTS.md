@@ -1,24 +1,27 @@
 # AGENTS.md
 
 ## Current handoff
-Remote-first Brain Vault v4 is being implemented on `feature/remote-vault-v4`.
+Remote-first Brain Vault v4 is implemented on `feature/remote-vault-v4`.
 
 Done:
-- Supabase migration 020 adds content-addressed Brain blobs, commit/change history, remote HEAD, replica base state and preserved three-way conflicts.
-- Live `avenox-bridge` DB is on transport schema 12 with an empty/unseeded remote vault.
-- `src/remote-vault.mjs` adds delta replica reconciliation with a local mtime/SHA cache.
-- Worker startup and successful semantic/local mutations trigger reconciliation; direct remote reads no longer conceptually depend on Termux once seeded.
-- Bridge API is moving to v4 and the v4 skill defines remote-first/deferred-write behavior.
+- Live Supabase `avenox-bridge` is on transport schema 12 with content-addressed Brain blobs, linear commit/change history, remote HEAD, per-replica base state and preserved three-way conflicts.
+- Direct remote `brain_context` and vault list/find/search/read-range/get/update are defined for Termux-free Brain reads and CAS content writes once the vault is seeded.
+- Task sources remain protected from generic writes; task/note/receipt semantic operations keep official Beyin transaction semantics and can stay durable/pending while the worker is offline.
+- Termux is an optional replica/worker: startup reconciles once, successful local semantic mutations sync immediately, remote HEAD is probed every 5s without scanning the local vault, and a cached local mtime/SHA scan runs every 60s to catch out-of-band edits.
+- Unchanged remote polls are HEAD-only; full content transfer happens only for the first seed or changed paths.
+- `SKILL.v4.md`, API v4 capabilities, canonical schema and remote-vault unit tests are present.
+- Duplicate experimental `020_remote_vault_shadow.sql` was removed.
 
 Verification:
-- Migration 020 applied successfully on the live Supabase project.
-- Live status after migration: seeded=false, file_count=0, open_conflicts=0, transport schema=12.
-- Supabase advisors show no new exposed table/RLS issue; SECURITY DEFINER warnings are expected for authenticated worker RPCs that internally verify `private.bridge_workers`.
+- Live migrations `remote_vault_v4`, `remote_vault_v4_indexes`, and `remote_vault_v4_source_guard` are applied.
+- Live status: schema=12, seeded=false, file_count=0, open_conflicts=0.
+- Earlier branch CI passed Node and PostgreSQL smoke jobs; verify the current polling-refinement head before merge.
+- Supabase advisors show no new exposed-table/RLS problem. SECURITY DEFINER warnings correspond to authenticated worker RPCs that internally verify `private.bridge_workers`.
 
 Open:
-- Finish canonical schema/SQL smoke v12 alignment.
-- Run GitHub CI and fix any Node/Postgres regressions.
-- Initial vault seed requires one worker start after the v4 worker is deployed; subsequent sync is delta-only.
+- Initial seed has not happened yet. It needs one start of the v4 worker after the branch is deployed/merged; after that normal Brain reads no longer require Termux.
+- Verify final CI, then open/merge the PR through the normal branch flow.
+- After the first seed, confirm the published API v4 contract snapshot and test a remote read, CAS write, delta pull and deliberate conflict.
 
 Next:
-Update tests/schema, verify CI, then open/merge the PR through the normal branch flow. Do not bypass task revision semantics when resolving task-file conflicts.
+Merge only after green CI. Do not push directly to main. On the first v4 worker start, let startup seed finish, verify `remote_vault_status.seeded=true`, then Termux may be stopped; later worker starts are delta-only.
