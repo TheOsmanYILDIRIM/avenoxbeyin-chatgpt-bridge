@@ -45,8 +45,8 @@ begin
   from private.bridge_transport_meta
   where singleton=true;
 
-  if v <> 11 then
-    raise exception 'expected transport schema 11, got %', v;
+  if v <> 12 then
+    raise exception 'expected transport schema 12, got %', v;
   end if;
 
   if to_regprocedure('public.bridge_transport_contract()') is null then
@@ -83,6 +83,18 @@ begin
 
   if to_regprocedure('public.wait_brain_command(uuid,integer,integer)') is null then
     raise exception 'missing wait_brain_command(uuid,integer,integer)';
+  end if;
+
+  if to_regprocedure('public.brain_remote_rpc(text,jsonb)') is null then
+    raise exception 'missing brain_remote_rpc(text,jsonb)';
+  end if;
+
+  if to_regprocedure('public.brain_remote_replica_rpc(text,jsonb)') is null then
+    raise exception 'missing brain_remote_replica_rpc(text,jsonb)';
+  end if;
+
+  if private.brain_remote_status()->>'version' <> '1' then
+    raise exception 'remote vault status unavailable';
   end if;
 end
 $$;
