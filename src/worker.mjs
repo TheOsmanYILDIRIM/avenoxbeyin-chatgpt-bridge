@@ -292,7 +292,7 @@ export class Bridge {
       })
     );
 
-    const transport = await this.transportContract();
+    const transport = this._transportContract;
     const remoteVault = transport?.remote_vault_transport === 'versioned_remote_vault_v1'
       ? transport.remote_vault
       : null;
