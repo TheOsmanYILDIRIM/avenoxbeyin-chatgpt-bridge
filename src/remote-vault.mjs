@@ -121,6 +121,28 @@ async function ensureContent(bridge, local, source) {
   return got.content;
 }
 
+export async function probeRemoteVault(bridge, { reason='remote-probe' } = {}) {
+  const transport = await bridge.transportContract();
+  if (
+    transport?.remote_vault_transport !== 'versioned_remote_vault_v1' ||
+    typeof transport?.remote_vault?.rpc !== 'string'
+  ) {
+    return { supported:false, changed:false, reason:'remote_vault_unavailable' };
+  }
+
+  const cachePath = bridge.c.remote_vault_cache_path ||
+    resolve(bridge.bridgeRoot(), '.bridge-vault-cache.json');
+  const cache = await loadCache(cachePath);
+  const head = await bridge.rpc(transport.remote_vault.rpc, { p_operation:'head', p:{} });
+  const changed =
+    cache.remote_tree_hash !== (head?.tree_hash || null) ||
+    Number(cache.cursor_commit_seq || 0) < Number(head?.head_commit_seq || 0);
+
+  if (!changed) return { supported:true, changed:false, reason, head };
+  const result = await syncRemoteVault(bridge, { reason });
+  return { ...result, changed:true };
+}
+
 export async function syncRemoteVault(bridge, { reason='manual' } = {}) {
   const transport = await bridge.transportContract();
   if (
