@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { planReplicaSync } from '../src/remote-vault.mjs';
+import { planReplicaSync, probeRemoteVault } from '../src/remote-vault.mjs';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 test('remote-only change pulls when local stayed at base', () => {
   const plan = planReplicaSync(
@@ -48,4 +51,44 @@ test('local deletion is conservative and restores remote', () => {
     { 'A.md':'base' }
   );
   assert.equal(plan[0].action, 'pull');
+});
+
+
+test('HEAD probe skips local scan when remote tree is unchanged', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'avenox-remote-vault-test-'));
+  const cachePath = join(dir, 'cache.json');
+  await writeFile(cachePath, JSON.stringify({
+    version:1,
+    cursor_commit_seq:7,
+    remote_tree_hash:'same-tree',
+    files:{},
+    base:{},
+    remote:{}
+  }));
+
+  let rpcCalls = 0;
+  const bridge = {
+    c:{ remote_vault_cache_path:cachePath },
+    bridgeRoot:() => dir,
+    transportContract:async () => ({
+      remote_vault_transport:'versioned_remote_vault_v1',
+      remote_vault:{ rpc:'brain_remote_rpc', replica_rpc:'brain_remote_replica_rpc' }
+    }),
+    rpc:async (name, body) => {
+      rpcCalls += 1;
+      assert.equal(name, 'brain_remote_rpc');
+      assert.equal(body.p_operation, 'head');
+      return { tree_hash:'same-tree', head_commit_seq:7, file_count:10 };
+    },
+    vaultList:async () => { throw new Error('local scan should not run'); }
+  };
+
+  try {
+    const result = await probeRemoteVault(bridge);
+    assert.equal(result.supported, true);
+    assert.equal(result.changed, false);
+    assert.equal(rpcCalls, 1);
+  } finally {
+    await rm(dir, { recursive:true, force:true });
+  }
 });
