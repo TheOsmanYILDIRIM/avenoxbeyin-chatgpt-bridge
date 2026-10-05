@@ -15,13 +15,13 @@ Done:
 Verification:
 - Live migrations `remote_vault_v4`, `remote_vault_v4_indexes`, and `remote_vault_v4_source_guard` are applied.
 - Live status: schema=12, seeded=false, file_count=0, open_conflicts=0.
-- Earlier branch CI passed Node and PostgreSQL smoke jobs; verify the current polling-refinement head before merge.
+- Final compatibility/polling head `edd3a064...` passed both Node and PostgreSQL schema smoke jobs.
 - Supabase advisors show no new exposed-table/RLS problem. SECURITY DEFINER warnings correspond to authenticated worker RPCs that internally verify `private.bridge_workers`.
 
 Open:
 - Initial seed has not happened yet. It needs one start of the v4 worker after the branch is deployed/merged; after that normal Brain reads no longer require Termux.
-- Verify final CI, then open/merge the PR through the normal branch flow.
+- PR #1 is open against `main`; keep the normal branch/PR flow and do not direct-push main.
 - After the first seed, confirm the published API v4 contract snapshot and test a remote read, CAS write, delta pull and deliberate conflict.
 
 Next:
-Merge only after green CI. Do not push directly to main. On the first v4 worker start, let startup seed finish, verify `remote_vault_status.seeded=true`, then Termux may be stopped; later worker starts are delta-only.
+PR #1 is green at the recorded head; do not push directly to main. On the first v4 worker start, let startup seed finish, verify `remote_vault_status.seeded=true`, then Termux may be stopped; later worker starts are delta-only.
