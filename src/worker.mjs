@@ -11,13 +11,13 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { CAPABILITIES, BRIDGE_API_VERSION } from './capabilities.mjs';
 import { appendCommandLog } from './telemetry.mjs';
-import { syncRemoteVault as reconcileRemoteVault } from './remote-vault.mjs';
+import { syncRemoteVault as reconcileRemoteVault, probeRemoteVault as probeRemoteVaultHead } from './remote-vault.mjs';
 
 const execFileAsync = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BRIDGE_ROOT = resolve(HERE, '..');
 const BRIDGE_SKILL_PATH = resolve(BRIDGE_ROOT, 'skills', 'avenox-chatgpt-bridge', 'SKILL.v4.md');
-export const REQUIRED_TRANSPORT_SCHEMA = 11;
+export const REQUIRED_TRANSPORT_SCHEMA = 12;
 export const DEFAULT_CHATGPT_HOOK_CADENCE = 4;
 export const CHATGPT_HOOK_DELIMITER = '\n\n---\n# AVENOX CONTRACT CAPSULE\n\n';
 export const CONTRACT_SNAPSHOT_VERSION = 2;
@@ -90,6 +90,8 @@ export class Bridge {
     this._brainVersion = undefined;
     this._contractSnapshot = null;
     this._remoteVaultSyncPromise = null;
+    this._remoteVaultRemoteTimer = null;
+    this._remoteVaultLocalTimer = null;
     this.chatgptHookCadence = Number(
       config?.chatgpt_hook_cadence ?? process.env.AVENOX_CHATGPT_HOOK_CADENCE ?? DEFAULT_CHATGPT_HOOK_CADENCE
     );
@@ -381,6 +383,7 @@ export class Bridge {
     await this.transportContract();
     try {
       await this.syncRemoteVault('startup');
+      this.startRemoteVaultPolling();
     } catch (error) {
       console.error('[remote-vault-startup]', error.message);
     }
@@ -510,6 +513,40 @@ export class Bridge {
     this._remoteVaultSyncPromise = reconcileRemoteVault(this, { reason })
       .finally(() => { this._remoteVaultSyncPromise = null; });
     return this._remoteVaultSyncPromise;
+  }
+
+  async probeRemoteVault(reason = 'remote-probe') {
+    if (this._remoteVaultSyncPromise) return this._remoteVaultSyncPromise;
+    this._remoteVaultSyncPromise = probeRemoteVaultHead(this, { reason })
+      .finally(() => { this._remoteVaultSyncPromise = null; });
+    return this._remoteVaultSyncPromise;
+  }
+
+  startRemoteVaultPolling() {
+    if (this._remoteVaultRemoteTimer || this._remoteVaultLocalTimer) return;
+
+    const remoteMs = Math.max(
+      1000,
+      Number(this.c.remote_vault_remote_poll_ms || process.env.AVENOX_REMOTE_VAULT_REMOTE_POLL_MS || 5000)
+    );
+    const localMs = Math.max(
+      remoteMs,
+      Number(this.c.remote_vault_local_scan_ms || process.env.AVENOX_REMOTE_VAULT_LOCAL_SCAN_MS || 60000)
+    );
+
+    this._remoteVaultRemoteTimer = setInterval(() => {
+      this.probeRemoteVault('remote-poll').catch(error => {
+        console.error('[remote-vault-remote-poll]', error.message);
+      });
+    }, remoteMs);
+    this._remoteVaultRemoteTimer.unref?.();
+
+    this._remoteVaultLocalTimer = setInterval(() => {
+      this.syncRemoteVault('local-scan').catch(error => {
+        console.error('[remote-vault-local-scan]', error.message);
+      });
+    }, localMs);
+    this._remoteVaultLocalTimer.unref?.();
   }
 
   hookStatePath() {
