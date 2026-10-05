@@ -250,6 +250,33 @@ process.exit(2);
   }
 });
 
+test('cached v4 transport promotes remote Brain operations to direct Supabase RPC', async t => {
+  const { bridge } = await fixture(t, String.raw`
+const args = process.argv.slice(2);
+if (args[0] === '-h') {
+  console.log('usage: beyin.py {context,sync,doctor}');
+  process.exit(0);
+}
+process.exit(2);
+`);
+  bridge._transportContract = {
+    schema_version:12,
+    claim_rpc:'claim_next_brain_command_v2',
+    finish_rpc:'finish_brain_command_v2',
+    vault_transport:'trusted_supabase_queue',
+    remote_vault_transport:'versioned_remote_vault_v1',
+    remote_vault:{ rpc:'brain_remote_rpc', replica_rpc:'brain_remote_replica_rpc' }
+  };
+  const caps = await bridge.runtimeCapabilities();
+  const byName = new Map(caps.map(x => [x.name,x]));
+  for (const name of [
+    'brain_context','brain_vault_list','brain_vault_find','brain_vault_search',
+    'brain_vault_read_range','brain_vault_get','brain_vault_update','brain_remote_conflicts'
+  ]) {
+    assert.equal(byName.get(name).transport, 'direct_supabase_rpc');
+  }
+});
+
 test('normal worker handling returns vault result through standard projection', async t => {
   const { vault, bridge } = await fixture(t);
   const content = '# Core\ntrusted vault content';
@@ -273,7 +300,7 @@ test('normal worker handling returns vault result through standard projection', 
   assert.equal(finished.projection.text, content);
 });
 
-test('bootstrap uses simplified v3 bridge skill and contains no pairing requirement', async t => {
+test('bootstrap uses remote-first v4 bridge skill and contains no pairing requirement', async t => {
   const { vault, bridge } = await fixture(t);
   const coreDir = join(vault, '.agents', 'skills', 'beyin');
   await mkdir(coreDir, { recursive:true });
@@ -282,9 +309,9 @@ test('bootstrap uses simplified v3 bridge skill and contains no pairing requirem
   bridge.runtimeCapabilities = async () => [];
 
   const result = await bridge.bootstrap('test');
-  assert.equal(result.bridge_api_version, 3);
-  assert.match(result.bridge_skill.source, /SKILL\.v3\.md$/);
-  assert.match(result.bridge_skill.content, /## Full Vault/i);
+  assert.equal(result.bridge_api_version, 4);
+  assert.match(result.bridge_skill.source, /SKILL\.v4\.md$/);
+  assert.match(result.bridge_skill.content, /## Remote-first Brain/i);
   assert.equal('secure_transport' in result, false);
   assert.doesNotMatch(result.bridge_skill.content, /AVX3\./);
   assert.deepEqual(result.recent_task_journal, []);
