@@ -116,3 +116,33 @@ Database changes are expand-first:
 4. pass Node + cross-language crypto + PostgreSQL tests;
 5. update/restart worker;
 6. run live bootstrap E2E.
+
+
+## Remote-first Brain Vault v4
+
+v4 makes Supabase the always-readable versioned Brain HEAD while keeping Avenox Beyin semantics intact.
+
+```text
+ChatGPT
+  | direct reads / CAS content writes
+  v
+Supabase remote Brain HEAD
+  - content-addressed blobs
+  - linear commit/change sequence
+  - source -> blob HEAD
+  - FTS/source retrieval
+  - preserved BASE/LOCAL/REMOTE conflicts
+  ^
+  | delta sync only after initial seed
+  v
+Termux worker
+  - optional local replica
+  - official beyin.py task/note/receipt transactions
+  - AGY / local tools
+```
+
+Project repositories remain canonical in GitHub. The Brain mirror is for Brain/companion/tasks/knowledge continuity, not a second copy of project repositories.
+
+Replica sync keeps a local `.bridge-vault-cache.json` with mtime/SHA, remote tree hash, commit cursor, remote path SHAs and per-path base SHAs. An unchanged HEAD costs one small status request; changed remote state is fetched from the commit cursor; changed local files alone are re-hashed. Three-way conflicts preserve both blob variants instead of using last-write-wins.
+
+Generic remote content writes remain CAS protected and reject task sources. Task/note/receipt operations continue through official Beyin transactions; when the worker is offline their queue command can remain durable/pending and must not be duplicated.

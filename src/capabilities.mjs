@@ -125,6 +125,14 @@ export const CAPABILITIES = [
     }, additionalProperties:false }
   },
   {
+    name: 'brain_remote_conflicts',
+    mode: 'read',
+    description: 'Read preserved three-way conflicts from the versioned remote Brain vault for AI resolution.',
+    maps_to: 'public.brain_remote_rpc(conflicts)',
+    transport: 'direct_supabase_rpc',
+    payload_schema: { type:'object', properties:{ limit:{type:'integer'} }, additionalProperties:false }
+  },
+  {
     name: 'brain_note_create',
     mode: 'write',
     description: 'Create a new note/knowledge source using the official Brain transaction.',
@@ -289,4 +297,4 @@ export const CAPABILITIES = [
 
 export const CAPABILITY_MAP = new Map(CAPABILITIES.map(x => [x.name, x]));
 
-export const BRIDGE_API_VERSION = 3;
+export const BRIDGE_API_VERSION = 4;

@@ -11,15 +11,16 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { CAPABILITIES, BRIDGE_API_VERSION } from './capabilities.mjs';
 import { appendCommandLog } from './telemetry.mjs';
+import { syncRemoteVault as reconcileRemoteVault, probeRemoteVault as probeRemoteVaultHead } from './remote-vault.mjs';
 
 const execFileAsync = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BRIDGE_ROOT = resolve(HERE, '..');
-const BRIDGE_SKILL_PATH = resolve(BRIDGE_ROOT, 'skills', 'avenox-chatgpt-bridge', 'SKILL.v3.md');
+const BRIDGE_SKILL_PATH = resolve(BRIDGE_ROOT, 'skills', 'avenox-chatgpt-bridge', 'SKILL.v4.md');
 export const REQUIRED_TRANSPORT_SCHEMA = 11;
 export const DEFAULT_CHATGPT_HOOK_CADENCE = 4;
 export const CHATGPT_HOOK_DELIMITER = '\n\n---\n# AVENOX CONTRACT CAPSULE\n\n';
-export const CONTRACT_SNAPSHOT_VERSION = 1;
+export const CONTRACT_SNAPSHOT_VERSION = 2;
 
 const RECEIPT_HARNESSES = new Set(['codex','claude','antigravity','hermes','opencode','omp','chatgpt']);
 const JEV_FEATURES = new Set(['context','review','answer','auto_context']);
@@ -38,6 +39,17 @@ const PERSISTENCE_RECOVERY_OPERATIONS = new Set([
   'avenox_turn_context',
   'avenox_turn_finalize'
 ]);
+const MIRROR_MUTATING_OPERATIONS = new Set([
+  'brain_source_update',
+  'brain_vault_update',
+  'brain_note_create',
+  'brain_task_create',
+  'brain_task_update',
+  'brain_receipt',
+  'brain_skill_sync',
+  'brain_companion_compact'
+]);
+
 const REMOTE_PROTECTED_BASENAMES = new Set([
   'Core.md','Soul.md','Kurallar.md','Last-Session.md','Threads.md','Journal.md',
   'AGENTS.md','CLAUDE.md'
@@ -77,6 +89,9 @@ export class Bridge {
     this._workerCommit = undefined;
     this._brainVersion = undefined;
     this._contractSnapshot = null;
+    this._remoteVaultSyncPromise = null;
+    this._remoteVaultRemoteTimer = null;
+    this._remoteVaultLocalTimer = null;
     this.chatgptHookCadence = Number(
       config?.chatgpt_hook_cadence ?? process.env.AVENOX_CHATGPT_HOOK_CADENCE ?? DEFAULT_CHATGPT_HOOK_CADENCE
     );
@@ -279,9 +294,36 @@ export class Bridge {
       })
     );
 
+    const transport = this._transportContract;
+    const remoteVault = transport?.remote_vault_transport === 'versioned_remote_vault_v1'
+      ? transport.remote_vault
+      : null;
+    const remoteOps = new Map([
+      ['brain_context','context'],
+      ['brain_vault_list','list'],
+      ['brain_vault_find','find'],
+      ['brain_vault_search','search'],
+      ['brain_vault_read_range','read_range'],
+      ['brain_vault_get','get'],
+      ['brain_vault_update','update'],
+      ['brain_remote_conflicts','conflicts']
+    ]);
+
     this._runtimeCapabilities = CAPABILITIES.map(cap => {
       const cliName = needsCli.get(cap.name);
       const live = { ...cap, available: cliName ? cli.has(cliName) : true };
+      if (remoteVault && remoteOps.has(cap.name)) {
+        live.transport = 'direct_supabase_rpc';
+        live.maps_to = `public.${remoteVault.rpc}(${remoteOps.get(cap.name)})`;
+        live.description = cap.name === 'brain_context'
+          ? 'Search the versioned remote Brain HEAD with source citations; Termux is not required.'
+          : cap.name === 'brain_vault_update'
+            ? 'CAS-update the versioned remote Brain HEAD; task sources still use brain_task_update.'
+            : cap.name === 'brain_remote_conflicts'
+              ? 'Read preserved three-way Brain conflicts for AI resolution.'
+              : 'Read the current versioned remote Brain HEAD without requiring Termux.';
+        return live;
+      }
       if (['brain_vault_list','brain_vault_get','brain_vault_update'].includes(cap.name)) {
         delete live.secure_transport_required;
         live.transport = 'trusted_supabase_queue';
@@ -339,6 +381,12 @@ export class Bridge {
 
   async run() {
     await this.transportContract();
+    try {
+      await this.syncRemoteVault('startup');
+      this.startRemoteVaultPolling();
+    } catch (error) {
+      console.error('[remote-vault-startup]', error.message);
+    }
     await this.refreshContractSnapshot();
     let idleStreak = 0;
     for (;;) {
@@ -440,6 +488,14 @@ export class Bridge {
         outcome.error,
         projection
       );
+
+      if (outcome.terminal_status === 'completed' && MIRROR_MUTATING_OPERATIONS.has(cmd.operation)) {
+        try {
+          await this.syncRemoteVault(`command:${cmd.operation}`);
+        } catch (error) {
+          console.error('[remote-vault-command-sync]', error.message);
+        }
+      }
     } catch (error) {
       finishError = error;
       throw error;
@@ -450,6 +506,47 @@ export class Bridge {
         console.error('[bridge-telemetry]', error.message);
       }
     }
+  }
+
+  async syncRemoteVault(reason = 'manual') {
+    if (this._remoteVaultSyncPromise) return this._remoteVaultSyncPromise;
+    this._remoteVaultSyncPromise = reconcileRemoteVault(this, { reason })
+      .finally(() => { this._remoteVaultSyncPromise = null; });
+    return this._remoteVaultSyncPromise;
+  }
+
+  async probeRemoteVault(reason = 'remote-probe') {
+    if (this._remoteVaultSyncPromise) return this._remoteVaultSyncPromise;
+    this._remoteVaultSyncPromise = probeRemoteVaultHead(this, { reason })
+      .finally(() => { this._remoteVaultSyncPromise = null; });
+    return this._remoteVaultSyncPromise;
+  }
+
+  startRemoteVaultPolling() {
+    if (this._remoteVaultRemoteTimer || this._remoteVaultLocalTimer) return;
+
+    const remoteMs = Math.max(
+      1000,
+      Number(this.c.remote_vault_remote_poll_ms || process.env.AVENOX_REMOTE_VAULT_REMOTE_POLL_MS || 5000)
+    );
+    const localMs = Math.max(
+      remoteMs,
+      Number(this.c.remote_vault_local_scan_ms || process.env.AVENOX_REMOTE_VAULT_LOCAL_SCAN_MS || 60000)
+    );
+
+    this._remoteVaultRemoteTimer = setInterval(() => {
+      this.probeRemoteVault('remote-poll').catch(error => {
+        console.error('[remote-vault-remote-poll]', error.message);
+      });
+    }, remoteMs);
+    this._remoteVaultRemoteTimer.unref?.();
+
+    this._remoteVaultLocalTimer = setInterval(() => {
+      this.syncRemoteVault('local-scan').catch(error => {
+        console.error('[remote-vault-local-scan]', error.message);
+      });
+    }, localMs);
+    this._remoteVaultLocalTimer.unref?.();
   }
 
   hookStatePath() {
@@ -625,6 +722,17 @@ export class Bridge {
       case 'brain_vault_update':
         return this.vaultUpdate(payload);
 
+      case 'brain_remote_conflicts': {
+        const transport = await this.transportContract();
+        if (transport?.remote_vault_transport !== 'versioned_remote_vault_v1') {
+          throw coded('remote_vault_unavailable', 'versioned remote vault is unavailable');
+        }
+        return this.rpc(transport.remote_vault.rpc, {
+          p_operation:'conflicts',
+          p:{ limit:payload.limit ?? 50 }
+        });
+      }
+
       case 'brain_note_create':
         return this.withTempJson(validateCreatePayload(payload), p => this.runBeyin('note-create', ['--file', p]));
 
@@ -745,7 +853,7 @@ export class Bridge {
       description,
       sha256: sha(content),
       content,
-      source: 'skills/avenox-chatgpt-bridge/SKILL.v3.md'
+      source: 'skills/avenox-chatgpt-bridge/SKILL.v4.md'
     };
   }
 
@@ -1028,6 +1136,7 @@ export class Bridge {
         out.push({
           source: rel,
           size_bytes: s.size,
+          mtime_ms: s.mtimeMs,
           writable: pairedVaultWritable(rel)
         });
         return;
@@ -1221,6 +1330,59 @@ export class Bridge {
       sha256: sha(content),
       content: content.toString('utf8'),
       writable: pairedVaultWritable(rel)
+    };
+  }
+
+  async vaultReplicaApply(payload) {
+    const source = requiredString(payload.source, 'source');
+    const content = requiredStringAllowEmpty(payload.content, 'content');
+    const expected = payload.expected_sha256 == null ? null : requiredSha(payload.expected_sha256);
+
+    if (
+      isAbsolute(source) || source.includes('\0') ||
+      source.split(/[\\/]/).includes('..')
+    ) throw new Error('invalid vault source');
+
+    const root = await realpath(this.c.vault_root);
+    const candidate = resolve(root, source);
+    const parent = await realpath(dirname(candidate));
+    if (!(parent === root || parent.startsWith(root + sep))) {
+      throw new Error('vault source escapes root');
+    }
+    const rel = relative(root, candidate).split(sep).join('/');
+    assertPairedVaultReadable(rel);
+
+    let current = null;
+    let mode = 0o644;
+    try {
+      const real = await realpath(candidate);
+      if (!(real === root || real.startsWith(root + sep))) {
+        throw new Error('vault source escapes root');
+      }
+      const s = await stat(real);
+      if (!s.isFile()) throw new Error('vault source is not a file');
+      mode = s.mode;
+      current = await readFile(real, 'utf8');
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+
+    if (expected == null && current != null) {
+      throw coded('conflict', 'local source appeared during remote pull');
+    }
+    if (expected != null && (current == null || sha(current) !== expected)) {
+      throw coded('conflict', 'local source hash changed during remote pull');
+    }
+
+    const temp = resolve(parent, `.avenox-replica-${process.pid}-${Date.now()}.tmp`);
+    await writeFile(temp, content, { encoding:'utf8', mode });
+    await chmod(temp, mode);
+    await rename(temp, candidate);
+    return {
+      source:rel,
+      previous_sha256:current == null ? null : sha(current),
+      sha256:sha(content),
+      size_bytes:Buffer.byteLength(content,'utf8')
     };
   }
 
